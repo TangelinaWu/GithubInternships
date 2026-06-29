@@ -1,0 +1,12 @@
+{
+  "name": "github-internships",
+  "version": "1.0.0",
+  "description": "Browse GitHub internship repos, assess fit with Claude, auto-log to Google Sheets",
+  "main": "electron-main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^42.3.3"
+  }
+}

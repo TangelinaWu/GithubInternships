@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JobApplier — Profile Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>JobApplier</h1>
+      <p class="subtitle">Your profile is used to auto-fill job applications.</p>
+    </header>
+
+    <div id="save-banner" class="banner hidden">Profile saved!</div>
+
+    <!-- Personal Information -->
+    <section>
+      <h2>Personal Information</h2>
+      <div class="form-grid">
+        <div class="field">
+          <label for="firstName">First Name</label>
+          <input type="text" id="firstName" name="firstName" placeholder="Angelina" />
+        </div>
+        <div class="field">
+          <label for="lastName">Last Name</label>
+          <input type="text" id="lastName" name="lastName" placeholder="Wu" />
+        </div>
+        <div class="field">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" placeholder="you@example.com" />
+        </div>
+        <div class="field">
+          <label for="phone">Phone</label>
+          <input type="tel" id="phone" name="phone" placeholder="+1 (555) 000-0000" />
+        </div>
+        <div class="field full-width">
+          <label for="address">Street Address</label>
+          <input type="text" id="address" name="address" placeholder="123 Main St" />
+        </div>
+        <div class="field">
+          <label for="city">City</label>
+          <input type="text" id="city" name="city" placeholder="San Francisco" />
+        </div>
+        <div class="field">
+          <label for="state">State</label>
+          <input type="text" id="state" name="state" placeholder="CA" />
+        </div>
+        <div class="field">
+          <label for="zipCode">Zip Code</label>
+          <input type="text" id="zipCode" name="zipCode" placeholder="94105" />
+        </div>
+        <div class="field">
+          <label for="country">Country</label>
+          <input type="text" id="country" name="country" placeholder="United States" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Online Presence -->
+    <section>
+      <h2>Online Presence</h2>
+      <div class="form-grid">
+        <div class="field full-width">
+          <label for="linkedinUrl">LinkedIn URL</label>
+          <input type="url" id="linkedinUrl" name="linkedinUrl" placeholder="https://linkedin.com/in/yourname" />
+        </div>
+        <div class="field full-width">
+          <label for="githubUrl">GitHub URL</label>
+          <input type="url" id="githubUrl" name="githubUrl" placeholder="https://github.com/yourname" />
+        </div>
+        <div class="field full-width">
+          <label for="portfolioUrl">Portfolio / Personal Website</label>
+          <input type="url" id="portfolioUrl" name="portfolioUrl" placeholder="https://yourwebsite.com" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Resume -->
+    <section>
+      <h2>Resume</h2>
+      <div class="field">
+        <label for="resumeUpload">Upload Resume (PDF)</label>
+        <input type="file" id="resumeUpload" accept=".pdf" />
+        <p id="resumeStatus" class="hint"></p>
+      </div>
+    </section>
+
+    <!-- Work Information -->
+    <section>
+      <h2>Work Information</h2>
+      <div class="form-grid">
+        <div class="field full-width">
+          <label for="currentTitle">Current / Most Recent Job Title</label>
+          <input type="text" id="currentTitle" name="currentTitle" placeholder="Software Engineer" />
+        </div>
+        <div class="field">
+          <label for="yearsOfExperience">Years of Experience</label>
+          <input type="text" id="yearsOfExperience" name="yearsOfExperience" placeholder="3" />
+        </div>
+        <div class="field">
+          <label for="desiredSalary">Desired Salary</label>
+          <input type="text" id="desiredSalary" name="desiredSalary" placeholder="120000" />
+        </div>
+        <div class="field">
+          <label for="workAuthorization">Work Authorization</label>
+          <select id="workAuthorization" name="workAuthorization">
+            <option value="US Citizen">US Citizen</option>
+            <option value="Green Card">Green Card / Permanent Resident</option>
+            <option value="H1B">H1B Visa</option>
+            <option value="OPT/CPT">OPT / CPT</option>
+            <option value="TN Visa">TN Visa</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="checkbox" id="requiresSponsorship" name="requiresSponsorship" />
+            Requires visa sponsorship
+          </label>
+        </div>
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="checkbox" id="willingToRelocate" name="willingToRelocate" />
+            Willing to relocate
+          </label>
+        </div>
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="checkbox" id="canWorkRemote" name="canWorkRemote" checked />
+            Open to remote work
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Education -->
+    <section>
+      <h2>Education</h2>
+      <div class="form-grid">
+        <div class="field">
+          <label for="highestDegree">Highest Degree</label>
+          <select id="highestDegree" name="highestDegree">
+            <option value="High School">High School / GED</option>
+            <option value="Associate's">Associate's</option>
+            <option value="Bachelor's" selected>Bachelor's</option>
+            <option value="Master's">Master's</option>
+            <option value="MBA">MBA</option>
+            <option value="PhD">PhD / Doctorate</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="fieldOfStudy">Field of Study / Major</label>
+          <input type="text" id="fieldOfStudy" name="fieldOfStudy" placeholder="Computer Science" />
+        </div>
+        <div class="field full-width">
+          <label for="university">University / College</label>
+          <input type="text" id="university" name="university" placeholder="University of California, Berkeley" />
+        </div>
+        <div class="field">
+          <label for="graduationYear">Graduation Year</label>
+          <input type="text" id="graduationYear" name="graduationYear" placeholder="2024" />
+        </div>
+      </div>
+    </section>
+
+    <!-- EEOC / Demographics -->
+    <section>
+      <h2>Demographics <span class="optional">(optional — used for EEOC forms)</span></h2>
+      <div class="form-grid">
+        <div class="field">
+          <label for="gender">Gender</label>
+          <select id="gender" name="gender">
+            <option value="Decline to self-identify">Decline to self-identify</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Non-binary">Non-binary / Non-conforming</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="ethnicity">Ethnicity / Race</label>
+          <select id="ethnicity" name="ethnicity">
+            <option value="Decline to self-identify">Decline to self-identify</option>
+            <option value="Asian">Asian</option>
+            <option value="Black or African American">Black or African American</option>
+            <option value="Hispanic or Latino">Hispanic or Latino</option>
+            <option value="Native American">Native American / Alaska Native</option>
+            <option value="Native Hawaiian or Pacific Islander">Native Hawaiian or Pacific Islander</option>
+            <option value="Two or more races">Two or more races</option>
+            <option value="White">White</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="veteranStatus">Veteran Status</label>
+          <select id="veteranStatus" name="veteranStatus">
+            <option value="I am not a protected veteran">I am not a protected veteran</option>
+            <option value="I identify as a protected veteran">I identify as a protected veteran</option>
+            <option value="I don't wish to answer">I don't wish to answer</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="disabilityStatus">Disability Status</label>
+          <select id="disabilityStatus" name="disabilityStatus">
+            <option value="I don't wish to answer">I don't wish to answer</option>
+            <option value="Yes, I have a disability">Yes, I have a disability</option>
+            <option value="No, I don't have a disability">No, I don't have a disability</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- Professional Summary & Skills -->
+    <section>
+      <h2>Professional Summary &amp; Skills</h2>
+      <p class="hint">Claude uses this to answer open-ended questions like "Why are you interested in this role?"</p>
+      <div class="field">
+        <label for="professionalSummary">Professional Summary (2–3 sentences)</label>
+        <textarea id="professionalSummary" name="professionalSummary" rows="4"
+          placeholder="Experienced software engineer with 3 years building full-stack web apps. Passionate about clean code and user experience."></textarea>
+      </div>
+      <div class="field">
+        <label for="skills">Skills (comma-separated)</label>
+        <input type="text" id="skills" name="skills"
+          placeholder="Python, JavaScript, React, PostgreSQL, AWS" />
+      </div>
+      <div class="field">
+        <label for="coverLetterTemplate">Cover Letter Template</label>
+        <p class="hint">Use <code>{{company}}</code> and <code>{{role}}</code> as placeholders.</p>
+        <textarea id="coverLetterTemplate" name="coverLetterTemplate" rows="8"
+          placeholder="Dear Hiring Manager,&#10;&#10;I am excited to apply for the {{role}} position at {{company}}..."></textarea>
+      </div>
+    </section>
+
+    <!-- Claude AI Settings -->
+    <section>
+      <h2>Claude AI Settings</h2>
+      <!-- Credentials for auto-matching -->
+      <div class="form-grid">
+        <div class="field">
+          <label for="gpa">GPA</label>
+          <input type="text" id="gpa" name="gpa" placeholder="3.8" />
+        </div>
+        <div class="field full-width">
+          <label for="targetRoles">Target Roles <span class="hint">(comma-separated)</span></label>
+          <input type="text" id="targetRoles" name="targetRoles" placeholder="Software Engineer Intern, SWE Intern, ML Intern" />
+        </div>
+        <div class="field full-width">
+          <label for="preferredIndustries">Preferred Industries <span class="hint">(comma-separated)</span></label>
+          <input type="text" id="preferredIndustries" name="preferredIndustries" placeholder="Tech, Finance, Healthcare" />
+        </div>
+        <div class="field full-width">
+          <label for="relevantCoursework">Relevant Coursework <span class="hint">(comma-separated)</span></label>
+          <input type="text" id="relevantCoursework" name="relevantCoursework" placeholder="Data Structures, Algorithms, Machine Learning, OS" />
+        </div>
+        <div class="field full-width">
+          <label for="certifications">Certifications <span class="hint">(comma-separated)</span></label>
+          <input type="text" id="certifications" name="certifications" placeholder="AWS Cloud Practitioner, Google Data Analytics" />
+        </div>
+        <div class="field full-width">
+          <label for="workExperience">Work Experience</label>
+          <textarea id="workExperience" name="workExperience" rows="5" placeholder="Company · Title · Jun 2024 – Aug 2024&#10;• Built X using Python and React&#10;• Improved Y by Z%"></textarea>
+        </div>
+        <div class="field full-width">
+          <label for="projects">Projects</label>
+          <textarea id="projects" name="projects" rows="4" placeholder="Project Name — React, Node.js, PostgreSQL&#10;Brief description of what you built and impact"></textarea>
+        </div>
+      </div>
+
+      <!-- LinkedIn auto-login credentials -->
+      <div class="form-grid">
+        <div class="field full-width">
+          <label for="linkedinEmail">LinkedIn Email (for auto-login)</label>
+          <input type="email" id="linkedinEmail" name="linkedinEmail" placeholder="you@gmail.com" />
+        </div>
+        <div class="field full-width">
+          <label for="linkedinPassword">LinkedIn Password (for auto-login)</label>
+          <input type="password" id="linkedinPassword" name="linkedinPassword" placeholder="Your LinkedIn password" />
+          <p class="hint">Stored locally on this device only.</p>
+        </div>
+      </div>
+
+      <p class="hint">Your API key is stored locally on this device only and is never sent anywhere except directly to Anthropic.</p>
+      <div class="field">
+        <label for="claudeApiKey">Anthropic API Key</label>
+        <input type="password" id="claudeApiKey" name="claudeApiKey" placeholder="sk-ant-..." />
+        <p id="apiKeyStatus" class="hint"></p>
+      </div>
+    </section>
+
+    <!-- Behavior Settings -->
+    <section>
+      <h2>Behavior</h2>
+      <div class="field">
+        <label class="checkbox-label">
+          <input type="checkbox" id="confirmUnknownQuestions" name="confirmUnknownQuestions" checked />
+          Show AI suggestion overlay for unknown questions (recommended)
+        </label>
+      </div>
+      <div class="field">
+        <label class="checkbox-label">
+          <input type="checkbox" id="autoSubmit" name="autoSubmit" />
+          Auto-submit applications without confirmation (not recommended)
+        </label>
+      </div>
+      <div class="field">
+        <label class="checkbox-label">
+          <input type="checkbox" id="pauseOnEachStep" name="pauseOnEachStep" />
+          Pause after each form step (for review)
+        </label>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button id="saveBtn" class="btn-primary">Save Profile</button>
+    </div>
+  </div>
+
+  <script src="../shared/profileSchema.js"></script>
+  <script src="../shared/storage.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

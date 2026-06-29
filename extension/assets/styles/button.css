@@ -1,0 +1,9 @@
+/* Floating button host styles — applied to the outer DOM element (not shadow).
+   The shadow root handles internal styles. */
+#ja-btn-host {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  pointer-events: auto;
+}

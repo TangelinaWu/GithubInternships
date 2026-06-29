@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>GH Internships — Assessor</title>
+  <link rel="stylesheet" href="control.css" />
+</head>
+<body>
+
+  <div id="tab-bar">
+    <button id="tab-assess" class="tab tab-active">Assess <span id="assess-badge" class="hidden"></span></button>
+    <button id="tab-ai"     class="tab">Fields <span id="ai-badge" class="hidden"></span></button>
+    <button id="tab-log"    class="tab">Log</button>
+  </div>
+
+  <!-- ── Assess pane ──────────────────────────────────────────────────── -->
+  <div id="pane-assess">
+
+    <!-- Idle / waiting state -->
+    <div id="idle-state">
+      <div class="idle-icon">🔍</div>
+      <div class="idle-text">Open an internship application page to see the fit assessment here.</div>
+      <div class="idle-hint">Browse the GitHub tabs and click an Apply link.</div>
+    </div>
+
+    <!-- Loading state -->
+    <div id="loading-state" class="hidden">
+      <div id="loading-company"></div>
+      <div id="loading-role"></div>
+      <div class="loading-bar">
+        <div class="loading-bar-inner"></div>
+      </div>
+      <div class="loading-label">Asking Claude…</div>
+    </div>
+
+    <!-- Result state -->
+    <div id="result-state" class="hidden">
+      <div id="result-header">
+        <div id="result-score-circle">
+          <span id="result-score-num">—</span>
+          <span id="result-score-denom">/10</span>
+        </div>
+        <div id="result-meta">
+          <div id="result-company"></div>
+          <div id="result-role"></div>
+          <div id="result-label"></div>
+        </div>
+      </div>
+
+      <div id="result-recommendation"></div>
+
+      <div id="result-lists">
+        <div class="list-block">
+          <div class="list-header">Matching</div>
+          <ul id="list-matching"></ul>
+        </div>
+        <div class="list-block">
+          <div class="list-header">Missing</div>
+          <ul id="list-missing"></ul>
+        </div>
+      </div>
+
+      <div id="result-actions">
+        <button id="btn-skip">✕ Skip</button>
+        <button id="btn-apply">✓ Apply</button>
+      </div>
+
+      <div id="already-seen-banner" class="hidden">Already applied or skipped.</div>
+    </div>
+  </div>
+
+  <!-- ── Fields / AI pane ─────────────────────────────────────────────── -->
+  <div id="pane-ai" class="hidden">
+    <div id="ai-empty">No pending questions.<br>Unknown fields appear here during auto-fill.</div>
+    <div id="ai-form" class="hidden">
+      <div class="ai-label">Question</div>
+      <div id="ai-question"></div>
+      <div class="ai-label">Answer (edit before using)</div>
+      <div id="ai-loading">Claude is thinking…</div>
+      <textarea id="ai-answer" class="hidden" rows="5"></textarea>
+      <div id="ai-actions">
+        <button id="ai-skip">Skip field</button>
+        <button id="ai-use" disabled>Use answer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Activity log pane ────────────────────────────────────────────── -->
+  <div id="pane-log" class="hidden">
+    <div id="log-header-bar">
+      <span>Activity</span>
+      <button id="btn-clear-log">clear</button>
+    </div>
+    <div id="log"></div>
+  </div>
+
+  <script src="../shared/profileSchema.js"></script>
+  <script src="../shared/messaging.js"></script>
+  <script src="../shared/storage.js"></script>
+  <script src="control.js"></script>
+</body>
+</html>

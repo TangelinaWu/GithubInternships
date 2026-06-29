@@ -1,0 +1,11 @@
+/* Overlay host styles — applied to the outer DOM element (not shadow). */
+#ja-overlay-host {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  pointer-events: none;
+}
+
+#ja-overlay-host.visible {
+  pointer-events: auto;
+}

@@ -1,0 +1,171 @@
+{
+  "manifest_version": 2,
+  "name": "GH Internships",
+  "version": "1.0.0",
+  "description": "Browse GitHub internship repos, assess fit with Claude, auto-log to Google Sheets.",
+  "author": "Angelina",
+
+  "permissions": [
+    "storage",
+    "activeTab",
+    "tabs",
+    "notifications",
+    "https://api.anthropic.com/*",
+    "https://claude.ai/*",
+    "http://localhost/*",
+    "https://github.com/*"
+  ],
+
+  "background": {
+    "scripts": [
+      "shared/profileSchema.js",
+      "shared/messaging.js",
+      "shared/storage.js",
+      "background/background.js"
+    ],
+    "persistent": true
+  },
+
+  "browser_action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "assets/icons/icon-16.png",
+      "32": "assets/icons/icon-32.png"
+    }
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["*://claude.ai/*"],
+      "js": [
+        "shared/profileSchema.js",
+        "shared/messaging.js",
+        "shared/storage.js",
+        "content/sites/claude.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://github.com/*"],
+      "js": [
+        "shared/profileSchema.js",
+        "shared/messaging.js",
+        "shared/storage.js",
+        "content/sites/github.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://boards.greenhouse.io/*",
+        "*://job-boards.greenhouse.io/*",
+        "*://*.greenhouse.io/*"
+      ],
+      "js": [
+        "shared/profileSchema.js",
+        "shared/messaging.js",
+        "shared/storage.js",
+        "content/core/humanDelay.js",
+        "content/core/formFiller.js",
+        "content/core/formScanner.js",
+        "content/core/overlay.js",
+        "content/core/floatingButton.js",
+        "content/core/detector.js",
+        "content/sites/ats-assessor.js",
+        "content/sites/greenhouse.js",
+        "content/main.js"
+      ],
+      "css": ["assets/styles/button.css", "assets/styles/overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://jobs.lever.co/*",
+        "*://*.lever.co/*"
+      ],
+      "js": [
+        "shared/profileSchema.js",
+        "shared/messaging.js",
+        "shared/storage.js",
+        "content/core/humanDelay.js",
+        "content/core/formFiller.js",
+        "content/core/formScanner.js",
+        "content/core/overlay.js",
+        "content/core/floatingButton.js",
+        "content/core/detector.js",
+        "content/sites/ats-assessor.js",
+        "content/sites/lever.js",
+        "content/main.js"
+      ],
+      "css": ["assets/styles/button.css", "assets/styles/overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://app.joinhandshake.com/*"
+      ],
+      "js": [
+        "shared/profileSchema.js",
+        "shared/messaging.js",
+        "shared/storage.js",
+        "content/core/humanDelay.js",
+        "content/core/formFiller.js",
+        "content/core/formScanner.js",
+        "content/core/overlay.js",
+        "content/core/floatingButton.js",
+        "content/core/detector.js",
+        "content/sites/ats-assessor.js",
+        "content/sites/handshake.js",
+        "content/main.js"
+      ],
+      "css": ["assets/styles/button.css", "assets/styles/overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.myworkdayjobs.com/*",
+        "*://*.wd1.myworkdayjobs.com/*",
+        "*://*.wd5.myworkdayjobs.com/*"
+      ],
+      "js": [
+        "shared/profileSchema.js",
+        "shared/messaging.js",
+        "shared/storage.js",
+        "content/core/humanDelay.js",
+        "content/core/formFiller.js",
+        "content/core/formScanner.js",
+        "content/core/overlay.js",
+        "content/core/floatingButton.js",
+        "content/core/detector.js",
+        "content/sites/ats-assessor.js",
+        "content/main.js"
+      ],
+      "css": ["assets/styles/button.css", "assets/styles/overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://simplify.jobs/*",
+        "*://*.simplify.jobs/*"
+      ],
+      "js": [
+        "shared/profileSchema.js",
+        "shared/messaging.js",
+        "shared/storage.js",
+        "content/sites/ats-assessor.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  }
+}

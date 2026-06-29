@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>JobApplier</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <img src="../assets/icons/icon-32.png" alt="" width="20" height="20" />
+        <span>JobApplier</span>
+      </div>
+    </header>
+
+    <div id="status-section">
+      <div id="status-dot" class="dot idle"></div>
+      <span id="status-text">Idle</span>
+    </div>
+
+    <div id="detection-msg" class="hint hidden">
+      No job form detected on this page.
+    </div>
+
+    <div id="api-key-warning" class="warning hidden">
+      No Claude API key — AI suggestions disabled.
+    </div>
+
+    <div id="log-section">
+      <p class="section-title">Recent Applications</p>
+      <ul id="log-list"><li class="empty">No applications yet.</li></ul>
+    </div>
+
+    <div class="actions">
+      <button id="openOptions" class="btn">Edit Profile</button>
+    </div>
+  </div>
+
+  <script src="../shared/profileSchema.js"></script>
+  <script src="../shared/storage.js"></script>
+  <script src="../shared/messaging.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
