@@ -13,6 +13,13 @@
     <button id="tab-log"    class="tab">Log</button>
   </div>
 
+  <!-- ── Queue progress strip (always visible when a queue is running) ── -->
+  <div id="queue-strip" class="hidden">
+    <span id="queue-strip-label">⏳ Queue</span>
+    <div id="queue-strip-bar"><div id="queue-strip-fill"></div></div>
+    <span id="queue-strip-count">0 / 0</span>
+  </div>
+
   <!-- ── Assess pane ──────────────────────────────────────────────────── -->
   <div id="pane-assess">
 
@@ -21,6 +28,10 @@
       <div class="idle-icon">🔍</div>
       <div class="idle-text">Open an internship application page to see the fit assessment here.</div>
       <div class="idle-hint">Browse the GitHub tabs and click an Apply link.</div>
+      <div id="source-picker" class="hidden">
+        <div class="source-picker-label">Auto-apply from</div>
+        <div id="source-list"></div>
+      </div>
     </div>
 
     <!-- Loading state -->
@@ -66,6 +77,19 @@
       </div>
 
       <div id="already-seen-banner" class="hidden">Already applied or skipped.</div>
+    </div>
+
+    <!-- Failed state — extraction or auto-apply couldn't finish on its own -->
+    <div id="failed-state" class="hidden">
+      <div id="failed-icon">⚠</div>
+      <div id="failed-company"></div>
+      <div id="failed-role"></div>
+      <div id="failed-reason"></div>
+      <div id="failed-hint">If you finished this one by hand, mark it applied so it's logged.</div>
+      <div id="failed-actions">
+        <button id="btn-failed-skip">✕ Skip</button>
+        <button id="btn-failed-applied">✓ I Applied</button>
+      </div>
     </div>
   </div>
 

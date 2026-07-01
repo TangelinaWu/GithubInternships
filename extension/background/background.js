@@ -3,6 +3,10 @@
 
 const SHEETS_PORT = 3743
 
+// Must stay longer than CLAUDE_FIT_TIMEOUT_MS (defined below) — see its use
+// in the batch queue's safety-advance timer.
+const QUEUE_SAFETY_TIMEOUT_MS = 210000
+
 // Seed LinkedIn email on first run (reused from shared profile)
 ;(async () => {
   const profile = await getProfile()
@@ -35,7 +39,104 @@ const SHEETS_PORT = 3743
 // Track overlay questions: requestId → { tabId, question }
 const pendingQuestions = new Map()
 
+// Track open GitHub repo tabs and their pending-new counts, for the control
+// panel's "which page do you want to apply to" picker.
+const _sources = new Map()  // tabId → { tabId, repo, pending }
+
+function broadcastSources() {
+  chrome.runtime.sendMessage({
+    type:    MSG.SOURCES_UPDATED,
+    payload: { sources: [..._sources.values()] },
+  }).catch(() => {})
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (_sources.delete(tabId)) broadcastSources()
+})
+
+// On startup: clear stale queue state so _queueRunning starts clean
+chrome.storage.local.remove(['autoApplyQueue', 'autoApplyGithubTabId', 'autoApplyTotal', 'autoApplyDone'])
+
+// ── Batch auto-apply queue ────────────────────────────────────────────────────
+//
+// Each job opens as its own new tab via the GitHub tab's own window.open /
+// anchor-click (MSG.OPEN_JOB_URL) — never chrome.tabs.create/update, which
+// doesn't reliably produce a visible window in the Electron shell.
+
+let _queueTimer   = null
+let _queueRunning = false
+
+function advanceQueue() {
+  if (_queueTimer) { clearTimeout(_queueTimer); _queueTimer = null }
+
+  chrome.storage.local.get(
+    ['autoApplyQueue', 'autoApplyGithubTabId', 'autoApplyTotal', 'autoApplyDone'],
+    (data) => {
+      const queue  = data.autoApplyQueue
+      const total  = data.autoApplyTotal  || 0
+      const done   = (data.autoApplyDone  || 0) + 1
+      const ghTab  = data.autoApplyGithubTabId
+
+      if (!Array.isArray(queue) || queue.length === 0) {
+        // All jobs processed
+        _queueRunning = false
+        const donePayload = { done, total }
+        if (ghTab) chrome.tabs.sendMessage(ghTab, { type: MSG.QUEUE_DONE, payload: donePayload }).catch(() => {})
+        chrome.runtime.sendMessage({ type: MSG.QUEUE_DONE, payload: donePayload }).catch(() => {})
+        chrome.storage.local.remove(['autoApplyQueue', 'autoApplyGithubTabId', 'autoApplyTotal', 'autoApplyDone'])
+        return
+      }
+
+      const [nextUrl, ...remaining] = queue
+      chrome.storage.local.set({ autoApplyQueue: remaining, autoApplyDone: done })
+
+      const progPayload = { done, total }
+      if (ghTab) {
+        chrome.tabs.sendMessage(ghTab, { type: MSG.QUEUE_PROGRESS, payload: progPayload }).catch(() => {})
+        chrome.tabs.sendMessage(ghTab, { type: MSG.OPEN_JOB_URL, payload: { url: nextUrl } }).catch(() => {})
+      }
+      chrome.runtime.sendMessage({ type: MSG.QUEUE_PROGRESS, payload: progPayload }).catch(() => {})
+
+      // Safety: advance if the page never logs. Must stay longer than the
+      // Claude fit-check timeout (below) — otherwise the queue can race
+      // ahead to the next job while this one's fit-check is still in flight,
+      // and both would stomp on the same shared claudeJobResult storage key.
+      _queueTimer = setTimeout(advanceQueue, QUEUE_SAFETY_TIMEOUT_MS)
+    }
+  )
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+
+  // ── Batch queue: start processing a list of apply URLs ─────────────────
+  if (message.type === MSG.QUEUE_START) {
+    const { urls, total } = message.payload || {}
+    if (!Array.isArray(urls) || urls.length === 0) return false
+
+    // Only one queue at a time — multiple GitHub tabs may fire this simultaneously
+    if (_queueRunning) return false
+    _queueRunning = true
+
+    const [firstUrl, ...remaining] = urls
+    const ghTabId = sender.tab?.id
+
+    chrome.storage.local.set({
+      autoApplyQueue:       remaining,
+      autoApplyGithubTabId: ghTabId,
+      autoApplyTotal:       total || urls.length,
+      autoApplyDone:        0,
+    })
+
+    // Don't re-broadcast QUEUE_START — control panel already receives it
+    // directly from github.js via chrome.runtime.sendMessage
+
+    if (ghTabId) {
+      chrome.tabs.sendMessage(ghTabId, { type: MSG.OPEN_JOB_URL, payload: { url: firstUrl } }).catch(() => {})
+    }
+    if (_queueTimer) clearTimeout(_queueTimer)
+    _queueTimer = setTimeout(advanceQueue, QUEUE_SAFETY_TIMEOUT_MS)
+    return false
+  }
 
   // ── Fit check (Claude API) ──────────────────────────────────────────────
   if (message.type === MSG.CHECK_FIT) {
@@ -45,8 +146,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
-  // ── ATS assessor: new job detected ─────────────────────────────────────
-  if (message.type === MSG.GH_ASSESSING) {
+  // ── Scan manually-filled-in answers → merge into answers.json ──────────
+  if (message.type === MSG.SCAN_ANSWERS) {
+    handleScanAnswers(message.payload)
+      .then(sendResponse)
+      .catch(err => sendResponse({ error: err.message }))
+    return true
+  }
+
+  // ── ATS assessor: new job detected (or extraction failed outright) ──────
+  if (message.type === MSG.GH_ASSESSING || message.type === MSG.GH_ASSESS_FAILED) {
     // Track source tab so GH_DO_APPLY/GH_DO_SKIP can be routed back
     if (sender.tab?.id) {
       chrome.storage.local.set({ ghAssessingTabId: sender.tab.id })
@@ -83,6 +192,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.payload?.url) {
       addSeenJob(message.payload.url).catch(() => {})
     }
+    // Forward result to control panel activity log
+    chrome.runtime.sendMessage({ type: MSG.LOG_APPLICATION, payload: message.payload }).catch(() => {})
+    // Advance the batch queue if one is running
+    chrome.storage.local.get('autoApplyQueue', ({ autoApplyQueue }) => {
+      if (autoApplyQueue !== undefined) advanceQueue()
+    })
     return false
   }
 
@@ -126,8 +241,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   // ── Auto-apply pipeline messages ────────────────────────────────────────
-  if ([MSG.AUTO_APPLY_STARTED, MSG.AUTO_APPLY_FILLING, MSG.AUTO_APPLY_COMPLETE].includes(message.type)) {
+  if ([MSG.AUTO_APPLY_STARTED, MSG.AUTO_APPLY_FILLING, MSG.AUTO_APPLY_COMPLETE, MSG.AUTO_APPLY_FAILED].includes(message.type)) {
     chrome.runtime.sendMessage(message).catch(() => {})
+    // Route COMPLETE back to the ATS tab so ats-assessor.js can log it.
+    // FAILED is deliberately NOT routed back — it must not be auto-logged as
+    // applied; the control panel's Failed state lets the user decide.
+    if (message.type === MSG.AUTO_APPLY_COMPLETE && sender.tab?.id) {
+      chrome.tabs.sendMessage(sender.tab.id, message).catch(() => {})
+    }
     return false
   }
 
@@ -153,6 +274,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === MSG.GH_MARK_SEEN) {
     const { url } = message.payload || {}
     if (url) addSeenJob(url).catch(() => {})
+    return false
+  }
+
+  // ── GitHub tab reporting its pending-new count ──────────────────────────
+  if (message.type === MSG.SOURCE_READY) {
+    const tabId = sender.tab?.id
+    if (!tabId) return false
+    const { repo, pending } = message.payload || {}
+    _sources.set(tabId, { tabId, repo, pending })
+    broadcastSources()
+    return false
+  }
+
+  // ── Control panel: give me the current known sources ────────────────────
+  if (message.type === MSG.REQUEST_SOURCES) {
+    sendResponse({ sources: [..._sources.values()] })
+    return false
+  }
+
+  // ── Control panel: user picked which source tab to auto-apply from ─────
+  if (message.type === MSG.PICK_SOURCE) {
+    const { tabId } = message.payload || {}
+    if (!tabId) return false
+    chrome.tabs.update(tabId, { active: true }, () => {
+      chrome.tabs.sendMessage(tabId, { type: MSG.START_QUEUE }).catch(() => {})
+    })
     return false
   }
 })
@@ -228,81 +375,224 @@ async function handleClaudeRequest({ question, fieldContext, fieldLabel }) {
   return { suggestion }
 }
 
-async function handleFitCheck({ jobDescription }) {
-  const profile = await getProfile()
-  const apiKey  = profile.claudeApiKey
-  if (!apiKey || !apiKey.trim()) return { error: 'NO_API_KEY' }
+function buildFitAnalysisPrompt(profile, jobDescription) {
+  const name   = `${profile.firstName || ''} ${profile.lastName || ''}`.trim()
+  const yrs    = profile.yearsOfExperience || 1
+  const degree = [profile.highestDegree, profile.fieldOfStudy, profile.university].filter(Boolean).join(' in ')
 
-  const name = `${profile.firstName} ${profile.lastName}`.trim()
-  const profileText = [
-    `Name: ${name}`,
-    `Title: ${profile.currentTitle}`,
-    `Years of experience: ${profile.yearsOfExperience}`,
-    `Education: ${profile.highestDegree} in ${profile.fieldOfStudy} from ${profile.university}` +
-      (profile.gpa ? ` (GPA: ${profile.gpa})` : ''),
-    `Skills: ${profile.skills}`,
-    profile.certifications      && `Certifications: ${profile.certifications}`,
-    profile.relevantCoursework  && `Relevant coursework: ${profile.relevantCoursework}`,
-    profile.workExperience      && `Work experience:\n${profile.workExperience}`,
-    profile.projects            && `Projects:\n${profile.projects}`,
-    profile.professionalSummary && `Summary: ${profile.professionalSummary}`,
-  ].filter(Boolean).join('\n')
-
-  const prompt = `You are evaluating a job candidate's fit for an internship or job.
-
-HARD DISQUALIFIERS — check first. If ANY apply, set score to 0, scoreLabel to "Disqualified", and put the reason in recommendation:
-• Requires Master's or PhD and does NOT accept a Bachelor's degree
-• Requires more years of experience than the candidate has (${profile.yearsOfExperience || 1} year(s))
-• Unpaid, academic credit only, or volunteer position
-• Has an age requirement or age range restriction
-• Requires a non-STEM degree specifically (CS, Engineering, Data Science, Math, Physics, or any STEM field is fine)
+  return `Evaluate whether this candidate should apply to this internship/job.
 
 CANDIDATE:
-${profileText}
+Name: ${name}
+Degree: ${degree}${profile.gpa ? ` (GPA: ${profile.gpa})` : ''}
+Years of experience: ${yrs}
+Skills: ${(profile.skills || '').slice(0, 300)}${profile.workExperience ? `\nWork: ${profile.workExperience.slice(0, 400)}` : ''}
 
-JOB DESCRIPTION:
-${(jobDescription || '').slice(0, 3500)}
+PAGE TEXT (the whole page's visible text — a real job description is in
+here somewhere, along with nav/footer/cookie-banner noise; ignore the noise):
+${(jobDescription || '').slice(0, 6000)}
 
-Reply with a raw JSON object (no markdown fences):
-{
-  "score": <integer 0-10>,
-  "scoreLabel": "<Disqualified | Weak Match | Fair Match | Good Match | Strong Match | Excellent Match>",
-  "matching": [<up to 5 short strings: skills the candidate has that match>],
-  "missing": [<up to 5 short strings: requirements the candidate doesn't clearly meet>],
-  "recommendation": "<one sentence on whether to apply and why>"
-}`
+---
+On the very first line write only YES (apply) or NO (skip), then on separate lines:
 
-  let response
-  try {
-    response = await fetch('https://api.anthropic.com/v1/messages', {
-      method:  'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         apiKey.trim(),
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model:      'claude-haiku-4-5-20251001',
-        max_tokens: 500,
-        messages:   [{ role: 'user', content: prompt }],
-      }),
+FIELD: YES (job is in a STEM/tech field) or NO
+DEGREE: YES (candidate's degree qualifies) or NO
+PAID: YES (this is a paid position) or NO
+EXPERIENCE: YES (experience requirement is ≤${yrs + 1} year(s)) or NO
+REASON: one-sentence explanation`
+}
+
+// ── Fit check via the claude.ai project tab (no API key needed) ──────────────
+//
+// Targets exactly one claude.ai tab directly via MSG.RUN_CLAUDE_JOB_ANALYSIS
+// (found with chrome.tabs.query, a read-only/reliable call), which tells
+// claude.js to redirect itself to the project — via plain window.location.href,
+// not chrome.tabs.update — if it isn't there already, then send the prompt
+// and parse the reply into claudeJobResult. Falls back to broadcasting via
+// storage only if no claude.ai tab is found at all (rare — the app always
+// opens one at startup). Deliberately no chrome.tabs.create/update here:
+// that extension-tabs-API navigation doesn't reliably produce a real window
+// action in this Electron shell (see MSG.OPEN_JOB_URL).
+
+const CLAUDE_PROJECT_URL = 'https://claude.ai/project/019ead72-f6d6-74aa-84ee-5c652fd866d0'
+const CLAUDE_FIT_TIMEOUT_MS = 180000
+
+function waitForClaudeJobResult(timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (result) => {
+      if (done) return
+      done = true
+      chrome.storage.onChanged.removeListener(listener)
+      clearTimeout(timer)
+      resolve(result)
+    }
+    const listener = (changes, area) => {
+      if (area === 'local' && changes.claudeJobResult) finish(changes.claudeJobResult.newValue)
+    }
+    chrome.storage.onChanged.addListener(listener)
+    const timer = setTimeout(() => finish({ error: 'TIMEOUT', decision: 'SKIP' }), timeoutMs)
+  })
+}
+
+function findClaudeTabId() {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ url: 'https://claude.ai/*' }, (tabs) => {
+      resolve(tabs && tabs.length > 0 ? tabs[0].id : null)
     })
-  } catch (err) {
-    return { error: 'NETWORK_ERROR: ' + err.message }
+  })
+}
+
+async function askClaudeViaTabInner(prompt) {
+  await chrome.storage.local.remove('claudeJobResult')
+  const resultPromise = waitForClaudeJobResult(CLAUDE_FIT_TIMEOUT_MS)
+
+  const tabId = await findClaudeTabId()
+  if (tabId) {
+    chrome.tabs.sendMessage(tabId, { type: MSG.RUN_CLAUDE_JOB_ANALYSIS, payload: { prompt } }).catch(() => {})
+  } else {
+    // No claude.ai tab found — fall back to a global broadcast so whichever
+    // tab loads next (or already exists but wasn't picked up by the query) gets it.
+    await chrome.storage.local.set({ pendingClaudeJobAnalysis: prompt })
   }
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    return { error: `API_ERROR ${response.status}: ${body}` }
-  }
+  const result = await resultPromise
+  await chrome.storage.local.remove('claudeJobResult')
+  return result
+}
 
-  const data = await response.json()
-  const text = data.content?.[0]?.text?.trim() || ''
+// claudeJobResult/pendingClaudeJobAnalysis are single global storage keys, so
+// two fit-checks in flight at once would stomp on each other — serialize them.
+let _claudeChain = Promise.resolve()
+function askClaudeViaTab(prompt) {
+  const result = _claudeChain.then(() => askClaudeViaTabInner(prompt))
+  _claudeChain = result.catch(() => {})
+  return result
+}
+
+async function handleFitCheck({ jobDescription }) {
+  const profile = await getProfile()
+  const prompt  = buildFitAnalysisPrompt(profile, jobDescription)
+  const result  = await askClaudeViaTab(prompt)
+
+  if (result?.error) return { error: result.error }
+
+  const isApply = result.decision === 'APPLY'
+  const missing = Object.entries(result.criteria || {})
+    .filter(([, v]) => v === 'NO')
+    .map(([k]) => k)
+
+  return {
+    decision:       isApply ? 'YES' : 'NO',
+    score:          isApply ? 8 : 2,
+    scoreLabel:     isApply ? 'Apply' : 'Skip',
+    matching:       [],
+    missing,
+    recommendation: result.reason || (isApply ? 'Claude says: Apply' : 'Claude says: Skip'),
+  }
+}
+
+// ── Scan-my-answers: turn manually-typed form values into answers.json ───────
+
+function buildAnswerScanPrompt(fields) {
+  const qa = fields.map(f => `Q: ${f.label}\nA: ${f.value}`).join('\n\n')
+
+  return `I just manually filled out a job application form myself. Convert each answer below into a reusable Q&A entry for my answers database, so future application forms with similar questions can be auto-filled without asking me again.
+
+${qa}
+
+Respond with ONLY a JSON array (no other text, wrapped in a single \`\`\`json code block), one entry per question, in this exact shape:
+[{"patterns": ["short lowercase phrase(s) that would match similar future questions"], "answer": "the answer text, cleaned up if needed"}]
+
+Skip entries where the answer is just a placeholder, or is specific to only this one company/role and wouldn't make sense reused elsewhere.`
+}
+
+function waitForClaudeAnswerScanResult(timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (result) => {
+      if (done) return
+      done = true
+      chrome.storage.onChanged.removeListener(listener)
+      clearTimeout(timer)
+      resolve(result)
+    }
+    const listener = (changes, area) => {
+      if (area === 'local' && changes.claudeAnswerScanResult) finish(changes.claudeAnswerScanResult.newValue)
+    }
+    chrome.storage.onChanged.addListener(listener)
+    const timer = setTimeout(() => finish({ error: 'TIMEOUT' }), timeoutMs)
+  })
+}
+
+async function askClaudeForAnswerScanInner(prompt) {
+  await chrome.storage.local.remove('claudeAnswerScanResult')
+  const resultPromise = waitForClaudeAnswerScanResult(CLAUDE_FIT_TIMEOUT_MS)
+
+  const tabId = await findClaudeTabId()
+  if (!tabId) return { error: 'NO_CLAUDE_TAB' }
+  chrome.tabs.sendMessage(tabId, { type: MSG.RUN_CLAUDE_ANSWER_SCAN, payload: { prompt } }).catch(() => {})
+
+  const result = await resultPromise
+  await chrome.storage.local.remove('claudeAnswerScanResult')
+  return result
+}
+
+// Shares _claudeChain with askClaudeViaTab — both talk to the same claude.ai
+// tab/editor, so a job-fit check and an answer-scan must never overlap.
+function askClaudeForAnswerScan(prompt) {
+  const result = _claudeChain.then(() => askClaudeForAnswerScanInner(prompt))
+  _claudeChain = result.catch(() => {})
+  return result
+}
+
+// Merge new {patterns, answer} entries into the existing answers DB —
+// replacing any existing entry that shares a pattern, appending otherwise.
+async function mergeAnswerEntries(newEntries) {
+  const existing = await getAnswers()
+  for (const entry of newEntries) {
+    if (!entry?.answer || !Array.isArray(entry.patterns) || entry.patterns.length === 0) continue
+    const patterns = entry.patterns.map(p => String(p).toLowerCase().trim()).filter(Boolean)
+    if (!patterns.length) continue
+
+    const idx = existing.findIndex(e => (e.patterns || []).some(p => patterns.includes(String(p).toLowerCase())))
+    if (idx >= 0) existing[idx] = { patterns, answer: String(entry.answer) }
+    else existing.push({ patterns, answer: String(entry.answer) })
+  }
+  await chrome.storage.local.set({ answers: existing })
+  return existing
+}
+
+async function handleScanAnswers({ fields }) {
+  if (!Array.isArray(fields) || fields.length === 0) return { error: 'NO_FIELDS' }
+
+  const prompt = buildAnswerScanPrompt(fields)
+  const result = await askClaudeForAnswerScan(prompt)
+  if (result?.error) return { error: result.error }
+
+  let parsed
   try {
-    return JSON.parse(text)
+    parsed = JSON.parse(result.json)
   } catch {
-    return { error: 'PARSE_ERROR', raw: text }
+    return { error: 'PARSE_FAILED' }
   }
+  if (!Array.isArray(parsed)) return { error: 'PARSE_FAILED' }
+
+  const merged = await mergeAnswerEntries(parsed)
+
+  try {
+    // Persist to credentials/answers.json via the Electron helper — chrome.storage
+    // alone would be wiped/overwritten on the next credential reseed.
+    await fetch(`http://127.0.0.1:${SHEETS_PORT}/save-answers`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ entries: merged }),
+    })
+  } catch {
+    // Electron helper not running — storage is still updated either way.
+  }
+
+  return { saved: parsed.length }
 }
 
 function buildSystemPrompt(profile) {

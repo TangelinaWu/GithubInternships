@@ -90,6 +90,9 @@ function injectStyles() {
 
     tr.ghi-locked { opacity: .4; }
 
+    tr.ghi-current { background: rgba(99,102,241,.18) !important; }
+    tr.ghi-current td { color: #a5b4fc !important; }
+
     .ghi-badge {
       display: inline-block;
       font-size: 10px;
@@ -127,26 +130,156 @@ function injectStyles() {
     #ghi-summary .s-val.green { color: #4ade80; }
     #ghi-summary .s-val.grey  { color: #64748b; }
     #ghi-summary .s-val.indigo { color: #818cf8; }
+
+    #ghi-auto-btn {
+      display: block; width: 100%; margin-top: 8px;
+      padding: 4px 8px;
+      background: rgba(99,102,241,.15); color: #818cf8;
+      border: 1px solid rgba(99,102,241,.3); border-radius: 4px;
+      font-family: -apple-system, sans-serif; font-size: 11px; font-weight: 700;
+      cursor: pointer; letter-spacing: .02em;
+    }
+    #ghi-auto-btn:hover:not(:disabled) { background: rgba(99,102,241,.28); }
+    #ghi-auto-btn:disabled { opacity: .6; cursor: default; }
   `
   document.head.appendChild(style)
 }
 
 let _summaryEl = null
+let _autoBtn   = null
+let _lastSentPending = null
+
+// Tell background how many new (unseen) jobs are pending here, so the
+// control panel's source picker can offer this page as a choice.
+function notifySourceReady(pendingCount) {
+  if (pendingCount === _lastSentPending) return
+  _lastSentPending = pendingCount
+  chrome.runtime.sendMessage({
+    type:    MSG.SOURCE_READY,
+    payload: { repo: SOURCE_LABEL, pending: pendingCount },
+  }).catch(() => {})
+}
+
+// Rows backing the queue currently in flight, in the same order as the URLs
+// handed to background — lets us scroll/highlight down the chart as it goes.
+let _queueRows = []
+
+function highlightCurrentRow(index) {
+  document.querySelectorAll('tr.ghi-current').forEach(el => el.classList.remove('ghi-current'))
+  const row = _queueRows[index]
+  if (!row) return
+  row.classList.add('ghi-current')
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+// Open a job URL as a new tab. Prefers a real click on the visible "apply"
+// anchor for that row (forced to target=_blank so it doesn't navigate this
+// GitHub tab away) — most faithful to an actual user click, and avoids
+// chrome.tabs.create, which doesn't reliably produce a visible window in the
+// Electron shell this runs in. Falls back to window.open (retried up to 4
+// times, stopping the instant one succeeds) if no matching anchor is found.
+function openJobUrl(url) {
+  const anchor = Array.from(document.querySelectorAll('a[href]')).find(a => a.href === url)
+  if (anchor) {
+    const prevTarget = anchor.getAttribute('target')
+    const prevRel     = anchor.getAttribute('rel')
+    anchor.setAttribute('target', '_blank')
+    anchor.setAttribute('rel', 'noopener')
+    anchor.click()
+    if (prevTarget === null) anchor.removeAttribute('target'); else anchor.setAttribute('target', prevTarget)
+    if (prevRel === null) anchor.removeAttribute('rel'); else anchor.setAttribute('rel', prevRel)
+    return
+  }
+  for (let i = 0; i < 4; i++) {
+    if (window.open(url, '_blank', 'noopener')) return
+  }
+}
+
+function startAutoApplyQueue() {
+  const pairs = getPendingRows()
+  if (pairs.length === 0) {
+    if (_autoBtn) _autoBtn.textContent = '✓ Nothing new'
+    return
+  }
+  _queueRows = pairs.map(p => p.row)
+  const urls = pairs.map(p => p.url)
+  if (_autoBtn) {
+    _autoBtn.textContent = `⏳ 0 / ${urls.length}`
+    _autoBtn.disabled = true
+  }
+  highlightCurrentRow(0)
+  chrome.runtime.sendMessage({
+    type:    MSG.QUEUE_START,
+    payload: { urls, total: urls.length },
+  })
+}
+
+function getPendingRows() {
+  const rows = Array.from(document.querySelectorAll('article table tr, .markdown-body table tr'))
+  const pairs = []
+  for (const row of rows) {
+    if (!row.querySelector('td')) continue
+    const info = extractRowInfo(row)
+    if (!info || info.locked || !info.applyUrl) continue
+    if (_seenUrls.has(info.applyUrl)) continue
+    pairs.push({ url: info.applyUrl, row })
+  }
+  return pairs
+}
+
+function getPendingApplyUrls() {
+  return getPendingRows().map(p => p.url)
+}
+
 function updateSummary(total, applied, skipped, locked) {
   if (!_summaryEl) {
     _summaryEl = document.createElement('div')
     _summaryEl.id = 'ghi-summary'
     document.body.appendChild(_summaryEl)
   }
-  const newCount = total - applied - skipped - locked
+  const newCount = Math.max(0, total - applied - skipped - locked)
   _summaryEl.innerHTML = `
     <strong>${SOURCE_LABEL}</strong>
     <div class="s-row"><span>Total</span><span class="s-val indigo">${total}</span></div>
     <div class="s-row"><span>Applied</span><span class="s-val green">${applied}</span></div>
     <div class="s-row"><span>Skipped</span><span class="s-val grey">${skipped}</span></div>
     <div class="s-row"><span>Locked 🔒</span><span class="s-val grey">${locked}</span></div>
-    <div class="s-row"><span>New</span><span class="s-val indigo">${newCount < 0 ? 0 : newCount}</span></div>
+    <div class="s-row"><span>New</span><span class="s-val indigo">${newCount}</span></div>
   `
+
+  notifySourceReady(newCount)
+
+  // Re-append the button (innerHTML wipe removes it each call)
+  if (!_autoBtn) {
+    _autoBtn = document.createElement('button')
+    _autoBtn.id = 'ghi-auto-btn'
+    _autoBtn.textContent = '▶ Auto-Apply New'
+    _autoBtn.addEventListener('click', startAutoApplyQueue)
+  }
+  _summaryEl.appendChild(_autoBtn)
+}
+
+// Progress / done messages from background, and remote start from the
+// control panel's source picker.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === MSG.START_QUEUE) { startAutoApplyQueue(); return }
+  if (msg.type === MSG.OPEN_JOB_URL) { openJobUrl(msg.payload?.url); return }
+  if (!_autoBtn) return
+  if (msg.type === MSG.QUEUE_PROGRESS) {
+    const { done, total } = msg.payload || {}
+    _autoBtn.textContent = `⏳ ${done} / ${total}`
+    highlightCurrentRow(done)
+  }
+  if (msg.type === MSG.QUEUE_DONE) {
+    const { done, total } = msg.payload || {}
+    _autoBtn.textContent = `✓ Done (${done} / ${total})`
+    _autoBtn.disabled = false
+    document.querySelectorAll('tr.ghi-current').forEach(el => el.classList.remove('ghi-current'))
+  }
+})
+
+function expandAllSections() {
+  document.querySelectorAll('details:not([open])').forEach(d => d.setAttribute('open', ''))
 }
 
 function highlightRows() {
@@ -207,10 +340,15 @@ async function init() {
 
   injectStyles()
   await loadSeenUrls()
+  expandAllSections()
   highlightRows()
 
   // GitHub renders README asynchronously; re-highlight after a short delay
-  setTimeout(highlightRows, 2000)
+  // so the pending count (and thus the control panel's source picker) is accurate.
+  setTimeout(() => {
+    expandAllSections()
+    highlightRows()
+  }, 2500)
 
   // Also re-highlight when navigating (GitHub is a SPA)
   const observer = new MutationObserver(() => {

@@ -5,6 +5,17 @@ const path   = require('path')
 const crypto = require('crypto')
 
 const PORT        = 3743   // different from JobApplier (3742) so both can run simultaneously
+
+// Physical-click bridge: electron-main.js registers a handler here so content
+// scripts can request a native OS-level click via HTTP (no Playwright needed).
+let _physicalClickHandler = null
+function setPhysicalClickHandler(fn) { _physicalClickHandler = fn }
+
+// Save-answers bridge: electron-main.js registers a handler here so the
+// extension can persist updated Q&A entries to credentials/answers.json
+// (chrome.storage has no filesystem access — only the main process does).
+let _saveAnswersHandler = null
+function setSaveAnswersHandler(fn) { _saveAnswersHandler = fn }
 const CREDS_FILE  = path.join(__dirname, 'credentials', 'sheets-credentials.json')
 const CONFIG_FILE = path.join(__dirname, 'credentials', 'sheets-config.json')
 
@@ -243,6 +254,56 @@ function startServer() {
 
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
 
+    // Physical-click: available regardless of Sheets configuration
+    if (req.method === 'POST' && req.url === '/physical-click') {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        let url
+        try { ({ url } = JSON.parse(body)) } catch {}
+        if (!url || !_physicalClickHandler) {
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'handler not registered' }))
+          return
+        }
+        _physicalClickHandler(url)
+          .then(result => {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(result))
+          })
+          .catch(err => {
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: err.message }))
+          })
+      })
+      return
+    }
+
+    // Save-answers: available regardless of Sheets configuration
+    if (req.method === 'POST' && req.url === '/save-answers') {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        let entries
+        try { ({ entries } = JSON.parse(body)) } catch {}
+        if (!Array.isArray(entries) || !_saveAnswersHandler) {
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'handler not registered' }))
+          return
+        }
+        _saveAnswersHandler(entries)
+          .then(result => {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(result))
+          })
+          .catch(err => {
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: err.message }))
+          })
+      })
+      return
+    }
+
     if (!enabled) {
       res.writeHead(503, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Sheets not configured' }))
@@ -297,4 +358,4 @@ function startServer() {
   return server
 }
 
-module.exports = { startServer }
+module.exports = { startServer, setPhysicalClickHandler, setSaveAnswersHandler }

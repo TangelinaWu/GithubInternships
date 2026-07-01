@@ -13,6 +13,7 @@
     "https://api.anthropic.com/*",
     "https://claude.ai/*",
     "http://localhost/*",
+    "http://127.0.0.1/*",
     "https://github.com/*"
   ],
 
@@ -145,6 +146,27 @@
     },
     {
       "matches": [
+        "*://jobs.ashbyhq.com/*"
+      ],
+      "js": [
+        "shared/profileSchema.js",
+        "shared/messaging.js",
+        "shared/storage.js",
+        "content/core/humanDelay.js",
+        "content/core/formFiller.js",
+        "content/core/formScanner.js",
+        "content/core/overlay.js",
+        "content/core/floatingButton.js",
+        "content/core/detector.js",
+        "content/sites/ats-assessor.js",
+        "content/sites/ashby.js",
+        "content/main.js"
+      ],
+      "css": ["assets/styles/button.css", "assets/styles/overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
         "*://simplify.jobs/*",
         "*://*.simplify.jobs/*"
       ],
@@ -152,8 +174,53 @@
         "shared/profileSchema.js",
         "shared/messaging.js",
         "shared/storage.js",
-        "content/sites/ats-assessor.js"
+        "content/core/humanDelay.js",
+        "content/core/formFiller.js",
+        "content/core/formScanner.js",
+        "content/core/overlay.js",
+        "content/core/floatingButton.js",
+        "content/core/detector.js",
+        "content/sites/ats-assessor.js",
+        "content/sites/simplify.js",
+        "content/main.js"
       ],
+      "css": ["assets/styles/button.css", "assets/styles/overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*/*"],
+      "exclude_matches": [
+        "*://github.com/*",
+        "*://claude.ai/*",
+        "*://*.claude.ai/*",
+        "*://boards.greenhouse.io/*",
+        "*://job-boards.greenhouse.io/*",
+        "*://*.greenhouse.io/*",
+        "*://jobs.lever.co/*",
+        "*://*.lever.co/*",
+        "*://app.joinhandshake.com/*",
+        "*://*.myworkdayjobs.com/*",
+        "*://*.wd1.myworkdayjobs.com/*",
+        "*://*.wd5.myworkdayjobs.com/*",
+        "*://jobs.ashbyhq.com/*",
+        "*://simplify.jobs/*",
+        "*://*.simplify.jobs/*"
+      ],
+      "js": [
+        "shared/profileSchema.js",
+        "shared/messaging.js",
+        "shared/storage.js",
+        "content/core/humanDelay.js",
+        "content/core/formFiller.js",
+        "content/core/formScanner.js",
+        "content/core/overlay.js",
+        "content/core/floatingButton.js",
+        "content/core/detector.js",
+        "content/sites/ats-assessor.js",
+        "content/sites/generic.js",
+        "content/main.js"
+      ],
+      "css": ["assets/styles/button.css", "assets/styles/overlay.css"],
       "run_at": "document_idle"
     }
   ],

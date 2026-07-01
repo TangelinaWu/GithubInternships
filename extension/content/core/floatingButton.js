@@ -54,6 +54,22 @@ const BTN_STYLES = `
     font-weight: 400;
     opacity: 0.85;
   }
+
+  .row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+  }
+
+  .pill.scan {
+    background: #0ea5e9;
+    color: #fff;
+    padding: 7px 14px;
+    font-size: 12px;
+  }
+  .pill.scan:hover { transform: scale(1.04); }
+  .pill.scan:disabled { opacity: 0.6; cursor: default; transform: none; }
 `;
 
 const floatingButton = (() => {
@@ -65,7 +81,11 @@ const floatingButton = (() => {
   let _isPaused = false;
   let onStartCb = null;
   let onPauseCb = null;
+  let onScanCb = null;
   let idleLabel = null;
+  let _scanBusy = false;
+  let _scanLabel = "💾 Save my answers";
+  const SCAN_LABEL_DEFAULT = "💾 Save my answers";
 
   function init() {
     if (host) return;
@@ -82,9 +102,26 @@ const floatingButton = (() => {
   function render(state, progressText) {
     if (!shadow) return;
 
-    // Remove previous button if any
-    const old = shadow.getElementById("ja-pill");
-    if (old) old.remove();
+    // Remove previous row if any
+    const oldRow = shadow.getElementById("ja-row");
+    if (oldRow) oldRow.remove();
+
+    const row = document.createElement("div");
+    row.id = "ja-row";
+    row.className = "row";
+
+    // Secondary button — scans whatever the user has manually filled in on
+    // this page and asks Claude to turn it into reusable answers.json
+    // entries. Only rendered when main.js provides an onScan callback.
+    if (onScanCb) {
+      const scanBtn = document.createElement("button");
+      scanBtn.id = "ja-scan";
+      scanBtn.className = "pill scan";
+      scanBtn.textContent = _scanLabel;
+      scanBtn.disabled = _scanBusy;
+      scanBtn.addEventListener("click", handleScanClick);
+      row.appendChild(scanBtn);
+    }
 
     const btn = document.createElement("button");
     btn.id = "ja-pill";
@@ -113,7 +150,29 @@ const floatingButton = (() => {
     }
 
     btn.addEventListener("click", handleClick);
-    shadow.appendChild(btn);
+    row.appendChild(btn);
+    shadow.appendChild(row);
+  }
+
+  async function handleScanClick() {
+    if (_scanBusy || !onScanCb) return;
+    _scanBusy = true;
+    _scanLabel = "⏳ Scanning…";
+    render(currentState);
+
+    try {
+      const result = await onScanCb();
+      _scanLabel = result?.label || "✓ Saved";
+    } catch (e) {
+      _scanLabel = "⚠ Scan failed";
+    }
+
+    _scanBusy = false;
+    render(currentState);
+    setTimeout(() => {
+      _scanLabel = SCAN_LABEL_DEFAULT;
+      render(currentState);
+    }, 4000);
   }
 
   function handleClick() {
@@ -143,9 +202,10 @@ const floatingButton = (() => {
     }
   }
 
-  function mount({ onStart, onPause, idleLabel: label }) {
+  function mount({ onStart, onPause, onScan, idleLabel: label }) {
     onStartCb = onStart;
     onPauseCb = onPause;
+    onScanCb = onScan || null;
     idleLabel = label || null;
     init();
     render(STATES.IDLE);
@@ -155,6 +215,9 @@ const floatingButton = (() => {
     if (host) host.remove();
     host = null;
     shadow = null;
+    onScanCb = null;
+    _scanBusy = false;
+    _scanLabel = SCAN_LABEL_DEFAULT;
   }
 
   function setProgress(text) {
@@ -168,5 +231,6 @@ const floatingButton = (() => {
     setProgress,
     STATES,
     isPaused() { return _isPaused; },
+    getState() { return currentState; },
   };
 })();

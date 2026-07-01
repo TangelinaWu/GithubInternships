@@ -5,8 +5,129 @@ const sheetsServer = require('./sheets-server')
 
 const TAB_ID = 'ghinternships'
 
+// Must stay in sync with CLAUDE_PROJECT_URL in extension/background/background.js
+// and extension/content/sites/claude.js
+const CLAUDE_PROJECT_URL = 'https://claude.ai/project/019ead72-f6d6-74aa-84ee-5c652fd866d0'
+
 let mainWindow
 let extensionId
+let initialWindowsCreated = false  // true once startup tabs are created
+
+// ── Physical-click helpers ────────────────────────────────────────────────────
+
+// Candidate-finding logic must stay in sync with content/main.js
+// clickIntermediateApplyIfNeeded (same per-site selectors + fuzzy text match).
+const SITE_APPLY_SELECTORS_SRC = JSON.stringify({
+  'greenhouse.io':     ['#apply_button', 'a[href="#app"]', '.postings-btn', 'button[id*="apply" i]'],
+  'lever.co':          ['.postings-btn', 'a.postings-btn', '.template-btn-submit'],
+  'myworkdayjobs.com': ['[data-automation-id="applyButton"]', '[data-automation-id="adventureButton"]', 'button[data-automation-id*="apply" i]'],
+  'ashbyhq.com':       ['a[href*="/application"]', 'button[class*="apply" i]', '[data-testid*="apply" i]'],
+  'joinhandshake.com': ['button[class*="apply" i]', '[data-hook*="apply" i]'],
+  'simplify.jobs':     ['button[class*="apply" i]', 'a[class*="apply" i]', 'button[class*="easy" i]'],
+})
+
+const FORM_SEL = 'form input:not([type="hidden"]), form select, form textarea'
+
+// Find the BrowserWindow whose URL matches (exact or same-path prefix)
+function findWindowByUrl(url) {
+  const targetPath = url.split('?')[0].replace(/#.*$/, '')
+  return BrowserWindow.getAllWindows().find(w => {
+    if (w.isDestroyed()) return false
+    const wUrl = w.webContents.getURL()
+    return wUrl === url || wUrl.split('?')[0].replace(/#.*$/, '') === targetPath
+  })
+}
+
+// Ask the page for the center point of every visible Apply-looking candidate,
+// most-reliable (site-specific selector) matches first.
+async function findApplyCandidateRects(win) {
+  return win.webContents.executeJavaScript(`
+    (() => {
+      const siteSelectors = ${SITE_APPLY_SELECTORS_SRC}
+      const isVisible = (el) => {
+        const s = getComputedStyle(el)
+        if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && r.height > 0
+      }
+      const looksLikeApplyText = (text) => {
+        if (!text || text.length > 40) return false
+        return /(easy\\s+apply|quick\\s+apply|apply\\s*(now|here)?|apply\\s+(for|to)\\s+(this\\s+)?(job|position|role|opening|internship)|submit\\s+(your\\s+)?application|i.?m\\s+interested)/i.test(text)
+      }
+      const host  = location.hostname.toLowerCase()
+      const entry = Object.entries(siteSelectors).find(([d]) => host.includes(d))
+      const selectors = entry ? entry[1] : []
+      const seen = new Set()
+      const out  = []
+      const add  = (el) => { if (el && !seen.has(el) && isVisible(el)) { seen.add(el); out.push(el) } }
+      selectors.forEach(sel => document.querySelectorAll(sel).forEach(add))
+      document.querySelectorAll('a[href], button, [role="button"]').forEach(el => {
+        const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim()
+        if (looksLikeApplyText(text)) add(el)
+      })
+      return out.map(el => {
+        const r = el.getBoundingClientRect()
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+      })
+    })()
+  `).catch(() => [])
+}
+
+async function pageHasForm(win) {
+  return win.webContents.executeJavaScript(`!!document.querySelector('${FORM_SEL}')`).catch(() => false)
+}
+
+// Perform an OS-level mouse click on the Apply button inside `win`, verifying
+// it actually did something (form appeared or the page navigated) before
+// declaring success — a click that hits a decorative element and does nothing
+// must be reported as a failure so the caller falls back to the JS-based method.
+// Returns { clicked: true } or { clicked: false, reason: '...' }.
+async function physicalClickApply(win) {
+  if (!win || win.isDestroyed()) return { clicked: false, reason: 'window-gone' }
+  if (await pageHasForm(win)) return { clicked: false, reason: 'form-already-present' }
+
+  const startUrl = win.webContents.getURL()
+
+  for (let round = 0; round < 3; round++) {
+    if (round > 0) await new Promise(r => setTimeout(r, 1200))
+    if (win.isDestroyed()) return { clicked: false, reason: 'window-gone' }
+
+    const rects = await findApplyCandidateRects(win)
+    if (!rects.length) continue
+
+    for (const rect of rects) {
+      if (win.isDestroyed()) return { clicked: false, reason: 'window-gone' }
+
+      // Bring the window to front so the user can watch
+      win.show()
+      win.focus()
+      await new Promise(r => setTimeout(r, 150))
+
+      // OS-level input events — same pipeline as real mouse, reliable on React SPAs
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: rect.x, y: rect.y })
+      await new Promise(r => setTimeout(r, 80))
+      win.webContents.sendInputEvent({ type: 'mouseDown', x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
+      await new Promise(r => setTimeout(r, 60))
+      win.webContents.sendInputEvent({ type: 'mouseUp',   x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
+
+      await new Promise(r => setTimeout(r, 1200))
+      if (win.isDestroyed()) return { clicked: false, reason: 'window-gone' }
+
+      if (win.webContents.getURL() !== startUrl) {
+        console.log(`[GHI] ✓ Physical click navigated (${rect.x}, ${rect.y}) — ${win.webContents.getURL()}`)
+        return { clicked: true, x: rect.x, y: rect.y }
+      }
+      if (await pageHasForm(win)) {
+        console.log(`[GHI] ✓ Physical click revealed form (${rect.x}, ${rect.y}) — ${win.webContents.getURL()}`)
+        return { clicked: true, x: rect.x, y: rect.y }
+      }
+    }
+  }
+
+  return { clicked: false, reason: 'no-form-after-click' }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function loadExtension() {
   const ext = await session.defaultSession.extensions.loadExtension(
@@ -96,7 +217,7 @@ function buildMenu() {
         { label: 'Internships 2027 (zapply)',   accelerator: 'CmdOrCtrl+1', click: navigate('https://github.com/zapplyjobs/Internships-2027') },
         { label: 'Summer 2027 (sndsh404)',      accelerator: 'CmdOrCtrl+2', click: navigate('https://github.com/sndsh404/summer-2027-internships') },
         { label: 'Summer 2026 (Simplify)',      accelerator: 'CmdOrCtrl+3', click: navigate('https://github.com/SimplifyJobs/Summer2026-Internships') },
-        { label: 'Claude',                      accelerator: 'CmdOrCtrl+4', click: navigate('https://claude.ai/new') },
+        { label: 'Claude',                      accelerator: 'CmdOrCtrl+4', click: navigate(CLAUDE_PROJECT_URL) },
         { label: 'Google Sheets',               accelerator: 'CmdOrCtrl+5', click: navigate('https://sheets.google.com') },
       ],
     },
@@ -225,6 +346,24 @@ async function createWindow() {
   patchUserAgent()
   await loadExtension()
   sheetsServer.startServer()
+
+  // Register physical-click handler so ats-assessor.js can request native clicks
+  sheetsServer.setPhysicalClickHandler(async (url) => {
+    const win = findWindowByUrl(url)
+    if (!win) return { clicked: false, reason: 'window-not-found' }
+    return physicalClickApply(win)
+  })
+
+  // Register save-answers handler — persists Q&A entries scanned from a
+  // manually-filled form back to credentials/answers.json, so they survive
+  // across restarts (chrome.storage alone would be wiped on reinstall).
+  sheetsServer.setSaveAnswersHandler(async (entries) => {
+    const answersPath = path.join(__dirname, 'credentials', 'answers.json')
+    fs.writeFileSync(answersPath, JSON.stringify({ entries }, null, 2))
+    console.log(`[GHInternships] Saved ${entries.length} answer entries to credentials/answers.json`)
+    return { ok: true, saved: entries.length }
+  })
+
   seedCredentialsToStorage()
 
   // Tab 1 — Internships 2027 (zapply)
@@ -254,8 +393,8 @@ async function createWindow() {
   const tab3 = makeTab('https://github.com/SimplifyJobs/Summer2026-Internships')
   mainWindow.addTabbedWindow(tab3)
 
-  // Tab 4 — Claude
-  const claudeTab = makeTab('https://claude.ai/new')
+  // Tab 4 — Claude (the "Job Applier" project, not a generic new chat)
+  const claudeTab = makeTab(CLAUDE_PROJECT_URL)
   mainWindow.addTabbedWindow(claudeTab)
 
   // Control panel — always on top, match assessor
@@ -272,7 +411,25 @@ async function createWindow() {
   attachContextMenu(controlWindow)
 
   mainWindow.focus()
+
+  // From this point on, any new BrowserWindow was opened by the extension
+  // (e.g. via chrome.tabs.create) — bring it to front so progress is visible
+  initialWindowsCreated = true
 }
+
+// Bring every dynamically-created apply tab to the front so the user can see
+// the automation working.  Runs for ALL windows opened after startup.
+app.on('browser-window-created', (_event, win) => {
+  if (!initialWindowsCreated) return  // skip startup windows
+  attachContextMenu(win)
+  win.webContents.setWindowOpenHandler(() => ({ action: 'allow' }))
+  win.webContents.on('did-create-window', w2 => attachContextMenu(w2))
+  // Show immediately — dom-ready fires too late to feel snappy
+  win.once('ready-to-show', () => {
+    win.show()
+    win.focus()
+  })
+})
 
 app.whenReady().then(createWindow)
 

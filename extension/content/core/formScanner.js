@@ -67,6 +67,53 @@ const formScanner = {
     return fields
   },
 
+  // Scan all visible, filled-in fields in `container` and return their
+  // CURRENT values (unlike scan(), which captures pristine structure before
+  // filling). Used by the "scan my answers" button, run after a user
+  // manually fills out a form, so those answers can be turned into reusable
+  // answers.json entries. Returns an array of { label, value }.
+  scanValues(container) {
+    const results = []
+    const seenLabels = new Set()
+    const seenRadioGroups = new Set()
+
+    for (const el of container.querySelectorAll(
+      'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="file"]), ' +
+      'select, textarea, [role="combobox"]'
+    )) {
+      if (!formFiller.isVisible(el)) continue
+
+      const type = formFiller.classifyElement(el)
+      if (type === 'hidden' || type === 'button' || type === 'unknown') continue
+
+      if (type === 'radio' || type === 'checkbox') {
+        if (el.name) {
+          if (seenRadioGroups.has(el.name)) continue
+          seenRadioGroups.add(el.name)
+          const group = [...document.querySelectorAll(`input[name="${CSS.escape(el.name)}"]`)]
+          const checked = group.find(r => r.checked)
+          if (!checked) continue
+          const label = this._radioGroupLabel(el) || formFiller.getLabelText(el)
+          const value = formFiller.getLabelText(checked) || checked.value
+          if (label && value) results.push({ label, value })
+          continue
+        }
+        if (!el.checked) continue
+      }
+
+      const label = formFiller.getLabelText(el)
+      if (!label || seenLabels.has(label)) continue
+
+      const value = (el.value || '').trim()
+      if (!value) continue
+
+      seenLabels.add(label)
+      results.push({ label, value })
+    }
+
+    return results
+  },
+
   // Send discovered fields to background → storage → control panel.
   report({ site, company, role, url, fields }) {
     if (!fields || fields.length === 0) return
