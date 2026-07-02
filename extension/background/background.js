@@ -66,6 +66,16 @@ chrome.storage.local.remove(['autoApplyQueue', 'autoApplyGithubTabId', 'autoAppl
 let _queueTimer   = null
 let _queueRunning = false
 
+// Advance the batch queue, but only if one is actually running — used at
+// every point where a job's automatic processing has concluded (extraction
+// failed, filled-awaiting-confirmation, or fill failed) so the queue keeps
+// moving without waiting on the user's manual Applied/Skip confirmation.
+function advanceQueueIfRunning() {
+  chrome.storage.local.get('autoApplyQueue', ({ autoApplyQueue }) => {
+    if (autoApplyQueue !== undefined) advanceQueue()
+  })
+}
+
 function advanceQueue() {
   if (_queueTimer) { clearTimeout(_queueTimer); _queueTimer = null }
 
@@ -162,6 +172,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     // Forward to control panel
     chrome.runtime.sendMessage(message).catch(() => {})
+    // Couldn't read this page — move on to the next queued job rather than
+    // stalling until the safety timeout.
+    if (message.type === MSG.GH_ASSESS_FAILED) advanceQueueIfRunning()
     return false
   }
 
@@ -194,10 +207,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     // Forward result to control panel activity log
     chrome.runtime.sendMessage({ type: MSG.LOG_APPLICATION, payload: message.payload }).catch(() => {})
-    // Advance the batch queue if one is running
-    chrome.storage.local.get('autoApplyQueue', ({ autoApplyQueue }) => {
-      if (autoApplyQueue !== undefined) advanceQueue()
-    })
+    advanceQueueIfRunning()
+    return false
+  }
+
+  // ── Sheets logging: application opened ──────────────────────────────────
+  if (message.type === MSG.LOG_APPLICATION_OPENED) {
+    fetch(`http://127.0.0.1:${SHEETS_PORT}/log-opened`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(message.payload),
+    }).catch(() => {})
     return false
   }
 
@@ -243,11 +263,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // ── Auto-apply pipeline messages ────────────────────────────────────────
   if ([MSG.AUTO_APPLY_STARTED, MSG.AUTO_APPLY_FILLING, MSG.AUTO_APPLY_COMPLETE, MSG.AUTO_APPLY_FAILED].includes(message.type)) {
     chrome.runtime.sendMessage(message).catch(() => {})
-    // Route COMPLETE back to the ATS tab so ats-assessor.js can log it.
-    // FAILED is deliberately NOT routed back — it must not be auto-logged as
-    // applied; the control panel's Failed state lets the user decide.
-    if (message.type === MSG.AUTO_APPLY_COMPLETE && sender.tab?.id) {
-      chrome.tabs.sendMessage(sender.tab.id, message).catch(() => {})
+    // Neither COMPLETE nor FAILED auto-logs a decision — the form being
+    // filled (or not) isn't the same as the user confirming it was actually
+    // submitted. Move the batch queue on regardless, so one job awaiting
+    // confirmation (or one that needs manual attention) never stalls the rest.
+    if (message.type === MSG.AUTO_APPLY_COMPLETE || message.type === MSG.AUTO_APPLY_FAILED) {
+      advanceQueueIfRunning()
     }
     return false
   }

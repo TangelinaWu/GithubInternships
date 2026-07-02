@@ -79,8 +79,6 @@ window.__jaHandler = {
         [...form.querySelectorAll('button')].find(b => /submit|apply/i.test(b.textContent))
       if (submitBtn) submitBtn.click()
     }
-
-    this._logApplication()
   },
 
   async _handleResumeUpload(form, profile) {
@@ -111,15 +109,4 @@ window.__jaHandler = {
     return window.location.pathname.split('/')[1] || ''
   },
 
-  _logApplication() {
-    chrome.runtime.sendMessage({
-      type: MSG.LOG_APPLICATION,
-      payload: {
-        site:    'ashby',
-        company: this._companyFromPage(),
-        role:    document.querySelector('h1')?.textContent.trim() || document.title,
-        url:     window.location.href,
-      },
-    }).catch(() => {})
-  },
 }

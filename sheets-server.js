@@ -22,6 +22,13 @@ const CONFIG_FILE = path.join(__dirname, 'credentials', 'sheets-config.json')
 const APPLIED_SHEET  = 'GH Applied'
 const SKIPPED_SHEET  = 'GH Skipped'
 
+// Master tracker tab — one row per application the moment it's opened for
+// filling, so nothing that was attempted goes unlogged even if the fill
+// fails or the user finishes it by hand. Status starts as 'N/A' and only
+// flips to 'Applied' / 'Skip' once the existing LOG_APPLICATION flow
+// (auto-complete or a manual "I Applied"/"Skip" click) reports a decision.
+const GITHUB_SHEET   = 'Github Internships'
+
 // Columns for the Applied sheet
 const APPLIED_HEADERS = [
   'Timestamp', 'Company', 'Role', 'Source Repo',
@@ -33,6 +40,13 @@ const APPLIED_HEADERS = [
 // Columns for the Skipped sheet
 const SKIPPED_HEADERS = [
   'Timestamp', 'Company', 'Role', 'Source Repo', 'Application URL', 'Reason',
+]
+
+// Columns for the master tracker sheet. Status is column A so it's always
+// the first thing visible; Application URL (col F) is the lookup key used
+// to find a row again when the decision comes in later.
+const GITHUB_HEADERS = [
+  'Status', 'Timestamp', 'Company', 'Role', 'Co-op Date', 'Application URL', 'Description',
 ]
 
 let _creds          = null
@@ -171,6 +185,103 @@ function detectJobType(description) {
   return 'Internship'
 }
 
+// Extract the co-op/internship term (e.g. "Fall 2026") from the role title
+// or description.
+function extractTerm(role, description) {
+  const m = `${role || ''} ${description || ''}`.match(/\b(Spring|Summer|Fall|Winter)\s*20\d{2}\b/i)
+  return m ? m[0].replace(/\s+/g, ' ').trim() : ''
+}
+
+// Find the 1-indexed sheet row (within the data rows, i.e. row 2+) whose
+// Application URL column matches `url`. Returns null if not found.
+async function findGithubInternshipsRow(token, url) {
+  const resp = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${_spreadsheetId}/values/${encodeURIComponent(GITHUB_SHEET)}!F2:F`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  const data = await resp.json()
+  const urls = (data.values || []).flat()
+  const idx  = urls.findIndex(u => u === url)
+  return idx === -1 ? null : idx + 2
+}
+
+async function appendGithubInternshipsRow(token, entry, status) {
+  await ensureHeaderRow(token, GITHUB_SHEET, GITHUB_HEADERS)
+
+  const row = [
+    status,
+    new Date().toLocaleString(),
+    entry.company || '',
+    entry.role    || '',
+    extractTerm(entry.role, entry.description),
+    entry.url     || '',
+    (entry.description || '').slice(0, 500),
+  ]
+
+  const resp = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${_spreadsheetId}/values/${encodeURIComponent(GITHUB_SHEET)}!A:G:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    {
+      method:  'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ values: [row] }),
+    }
+  )
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '')
+    throw new Error(`Append error ${resp.status}: ${text}`)
+  }
+}
+
+// Log an application the moment it's opened for filling — Status starts as
+// 'N/A' and is only flipped once a decision (Applied/Skip) comes in. Skipped
+// if a row for this URL already exists (auto-apply can hop across tabs and
+// re-fire the "opened" signal for the same job).
+async function logOpened(entry) {
+  if (!entry.url) return
+  const token = await getAccessToken()
+  await ensureHeaderRow(token, GITHUB_SHEET, GITHUB_HEADERS)
+
+  const existingRow = await findGithubInternshipsRow(token, entry.url)
+  if (existingRow) return
+
+  await appendGithubInternshipsRow(token, entry, 'N/A')
+  console.log(`[Sheets] Logged opened application: ${entry.company} / ${entry.role}`)
+}
+
+// Flip the tracker row's Status to 'Applied' or 'Skip' once a decision comes
+// in. Falls back to appending a full row if no 'opened' row was logged for
+// this URL (e.g. it was applied to outside the auto-apply pipeline).
+async function syncGithubInternshipsStatus(entry) {
+  if (!entry.url) return
+  const status = entry.decision === 'APPLIED' ? 'Applied'
+    : entry.decision === 'SKIPPED' ? 'Skip'
+    : null
+  if (!status) return
+
+  const token = await getAccessToken()
+  await ensureHeaderRow(token, GITHUB_SHEET, GITHUB_HEADERS)
+
+  const sheetRow = await findGithubInternshipsRow(token, entry.url)
+  if (!sheetRow) {
+    await appendGithubInternshipsRow(token, entry, status)
+    return
+  }
+
+  const resp = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${_spreadsheetId}/values/${encodeURIComponent(GITHUB_SHEET)}!A${sheetRow}?valueInputOption=USER_ENTERED`,
+    {
+      method:  'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ values: [[status]] }),
+    }
+  )
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '')
+    throw new Error(`Status update error ${resp.status}: ${text}`)
+  }
+  console.log(`[Sheets] Marked ${status} in ${GITHUB_SHEET}: ${entry.company} / ${entry.role}`)
+}
+
 async function appendRow(entry) {
   const token    = await getAccessToken()
   const isApplied = entry.decision === 'APPLIED'
@@ -224,6 +335,12 @@ async function appendRow(entry) {
   }
 
   console.log(`[Sheets] Logged to ${sheetName}: ${entry.decision} — ${entry.company} / ${entry.role}`)
+
+  // Also flip the master tracker's Status for this URL. Best-effort — a
+  // failure here shouldn't fail the primary Applied/Skipped log above.
+  syncGithubInternshipsStatus(entry).catch(e =>
+    console.error('[Sheets] syncGithubInternshipsStatus error:', e.message)
+  )
 }
 
 async function getSeenUrls() {
@@ -327,6 +444,30 @@ function startServer() {
           })
           .catch(e => {
             console.error('[Sheets] appendRow error:', e.message)
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: e.message }))
+          })
+      })
+      return
+    }
+
+    if (req.method === 'POST' && req.url === '/log-opened') {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        let entry
+        try { entry = JSON.parse(body) } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Bad JSON' }))
+          return
+        }
+        logOpened(entry)
+          .then(() => {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ ok: true }))
+          })
+          .catch(e => {
+            console.error('[Sheets] logOpened error:', e.message)
             res.writeHead(500, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({ error: e.message }))
           })

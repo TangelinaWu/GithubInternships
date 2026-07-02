@@ -79,8 +79,6 @@ window.__jaHandler = {
       const submitBtn = form.querySelector('button[type="submit"]');
       if (submitBtn) submitBtn.click();
     }
-
-    this._logApplication();
   },
 
   async _selectResume() {
@@ -107,17 +105,4 @@ window.__jaHandler = {
     }
   },
 
-  _logApplication() {
-    const role = document.querySelector("h1, .job-title")?.textContent.trim() || document.title;
-    const company = document.querySelector(".company-name, .employer-name")?.textContent.trim() || "";
-    chrome.runtime.sendMessage({
-      type: MSG.LOG_APPLICATION,
-      payload: {
-        site: "handshake",
-        company,
-        role,
-        url: window.location.href,
-      },
-    }).catch(() => {});
-  },
 };

@@ -316,25 +316,9 @@
     }).catch(() => {})
   }
 
-  // When form submission is detected (routed back by background.js), log as applied
-  chrome.runtime.onMessage.addListener(function applyDoneHandler(msg) {
-    if (msg.type !== MSG.AUTO_APPLY_COMPLETE) return
-    chrome.runtime.onMessage.removeListener(applyDoneHandler)
-
-    chrome.runtime.sendMessage({
-      type: MSG.LOG_APPLICATION,
-      payload: {
-        site:        'github',
-        company:     company || new URL(url).hostname,
-        role:        title   || '',
-        url, sourceRepo,
-        decision:    'APPLIED',
-        description: desc.slice(0, 600),
-        score:       fitResult?.score,
-        scoreLabel:  fitResult?.scoreLabel,
-        matching:    fitResult?.matching || [],
-        missing:     fitResult?.missing  || [],
-      },
-    }).catch(() => {})
-  })
+  // Form fill completing is NOT logged as Applied here — filling isn't the
+  // same as confirming a real submission. The floating "Confirm Applied"
+  // button (main.js, mounted with the job's own company/role/url/description)
+  // is the only thing that sends LOG_APPLICATION decision: 'APPLIED' for this
+  // job now, requiring the user's manual click.
 })()

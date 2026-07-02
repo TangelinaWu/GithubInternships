@@ -104,8 +104,6 @@ window.__jaHandler = {
         document.querySelector('button[type="submit"]');
       if (submitBtn) submitBtn.click();
     }
-
-    this._logApplication(profile);
   },
 
   // Upload resume to the "Autofill from resume" section.
@@ -184,17 +182,4 @@ window.__jaHandler = {
     await formFiller.fillContainer(eeocSection, profile, onUnknown);
   },
 
-  _logApplication(profile) {
-    const meta = document.querySelector("meta[property='og:title']");
-    const role = meta ? meta.content : document.title;
-    chrome.runtime.sendMessage({
-      type: MSG.LOG_APPLICATION,
-      payload: {
-        site: "greenhouse",
-        company: document.querySelector(".company-name, h1.company")?.textContent.trim() || "",
-        role: role.trim(),
-        url: window.location.href,
-      },
-    }).catch(() => {});
-  },
 };

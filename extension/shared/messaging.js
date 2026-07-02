@@ -22,6 +22,11 @@ const MSG = {
   // Content → Background: log a completed application
   LOG_APPLICATION: 'LOG_APPLICATION',
 
+  // Content → Background: an application was opened for filling — logged to
+  // the "Github Internships" tracker sheet immediately with Status 'N/A',
+  // before we know whether it'll end up Applied or Skipped.
+  LOG_APPLICATION_OPENED: 'LOG_APPLICATION_OPENED',
+
   // Content → Background: show an unknown field question in the control window
   OVERLAY_QUESTION: 'OVERLAY_QUESTION',
 

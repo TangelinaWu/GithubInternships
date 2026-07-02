@@ -85,9 +85,6 @@ window.__jaHandler = {
         submitBtn.click();
       }
     }
-
-    // Log the application attempt
-    this._logApplication(profile);
   },
 
   async _handleResumeUpload(form, profile) {
@@ -112,16 +109,4 @@ window.__jaHandler = {
     }
   },
 
-  _logApplication(profile) {
-    const jobTitle = document.title.replace(" - Lever", "").trim();
-    chrome.runtime.sendMessage({
-      type: MSG.LOG_APPLICATION,
-      payload: {
-        site: "lever",
-        company: window.location.pathname.split("/")[1] || "",
-        role: jobTitle,
-        url: window.location.href,
-      },
-    }).catch(() => {});
-  },
 };

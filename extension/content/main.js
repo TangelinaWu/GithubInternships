@@ -40,6 +40,34 @@
     return false;
   }
 
+  // Mounts the floating button for the auto-apply pipeline so it's always
+  // visible on the form's own tab — once filling reaches DONE, the button
+  // becomes "✓ Confirm Applied" and stays there until clicked, since a form
+  // being filled isn't the same as it having actually been submitted.
+  function mountConfirmButton(handler, jobInfo) {
+    floatingButton.mount({
+      onPause: () => handler.pause(),
+      onConfirm: () => {
+        chrome.runtime.sendMessage({
+          type: MSG.LOG_APPLICATION,
+          payload: {
+            site:       'github',
+            company:    jobInfo.company,
+            role:       jobInfo.role,
+            url:        jobInfo.url,
+            sourceRepo: jobInfo.sourceRepo,
+            decision:   'APPLIED',
+            description: jobInfo.description,
+            score:      jobInfo.score,
+            scoreLabel: jobInfo.scoreLabel,
+            matching:   jobInfo.matching,
+            missing:    jobInfo.missing,
+          },
+        }).catch(() => {});
+      },
+    });
+  }
+
   // Shared callback used by both auto-apply and manual paths.
   async function onUnknown(element, labelText) {
     const context = element.closest("form")
@@ -77,6 +105,8 @@
         if (openedNewTab) return;
 
         chrome.storage.local.remove('pendingAutoApply');
+        chrome.runtime.sendMessage({ type: MSG.LOG_APPLICATION_OPENED, payload: jobInfo }).catch(() => {});
+        mountConfirmButton(handler, jobInfo);
 
         const profile = await getProfile();
         handler.run(profile, onUnknown).then(() => {
@@ -328,6 +358,8 @@
     const openedNewTab = await clickIntermediateApplyIfNeeded();
     if (openedNewTab) return;
     chrome.storage.local.remove('pendingAutoApply');
+    chrome.runtime.sendMessage({ type: MSG.LOG_APPLICATION_OPENED, payload: jobInfo }).catch(() => {});
+    mountConfirmButton(handler, jobInfo);
     const profile = await getProfile();
     handler.run(profile, onUnknown).then(() => {
       reportAutoApplyOutcome(jobInfo);

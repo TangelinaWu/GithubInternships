@@ -33,6 +33,18 @@ window.__jaHandler = {
   },
 
   async _fillForm(profile, onUnknown) {
+    if (this._looksLikeAuthPage()) {
+      floatingButton.setState(floatingButton.STATES.ERROR)
+      chrome.runtime.sendMessage({
+        type: MSG.FILL_LOG,
+        payload: {
+          severity: 'warn',
+          text: '⚠ Login/sign-up/verification page detected — sign in manually, then click Apply again',
+        },
+      }).catch(() => {})
+      return
+    }
+
     const form = document.querySelector('form')
     if (!form) {
       floatingButton.setState(floatingButton.STATES.ERROR)
@@ -75,8 +87,6 @@ window.__jaHandler = {
         [...form.querySelectorAll('button')].find(b => /submit|apply/i.test(b.textContent))
       if (submitBtn) submitBtn.click()
     }
-
-    this._logApplication()
   },
 
   async _handleResumeUpload(form, profile) {
@@ -99,6 +109,27 @@ window.__jaHandler = {
     }
   },
 
+  // Detects login/sign-up/verification portals so we stop instead of trying
+  // to fuzzy-fill credentials. A visible password field is a strong signal on
+  // its own; otherwise require the auth wording to be prominent (title, main
+  // heading, or the submit button) so a plain "Log in" nav link elsewhere on
+  // an actual application page doesn't false-positive.
+  _looksLikeAuthPage() {
+    const AUTH_RE = /\b(log\s?in|sign\s?in|sign\s?up|create\s+(a\s+)?account|forgot\s+password|verification\s+code|verify\s+your\s+(email|phone|identity)|one[-\s]?time\s+(passcode|code|pin)|enter\s+(the\s+)?code)\b/i
+
+    const hasVisiblePasswordField = [...document.querySelectorAll('input[type="password"]')]
+      .some(el => formFiller.isVisible(el))
+
+    const prominentText = [
+      document.title,
+      document.querySelector('h1, h2')?.textContent,
+      ...[...document.querySelectorAll('button[type="submit"], input[type="submit"]')]
+        .map(b => b.textContent || b.value),
+    ].filter(Boolean).join(' ')
+
+    return hasVisiblePasswordField || AUTH_RE.test(prominentText)
+  },
+
   _companyFromPage() {
     const t = document.title
     if (t.includes(' at ')) return t.split(' at ').slice(-1)[0].trim()
@@ -106,15 +137,4 @@ window.__jaHandler = {
     return location.hostname
   },
 
-  _logApplication() {
-    chrome.runtime.sendMessage({
-      type: MSG.LOG_APPLICATION,
-      payload: {
-        site:    'generic',
-        company: this._companyFromPage(),
-        role:    document.querySelector('h1')?.textContent.trim() || document.title,
-        url:     window.location.href,
-      },
-    }).catch(() => {})
-  },
 }

@@ -29,7 +29,7 @@ const BTN_STYLES = `
   .pill.idle    { background: #4f46e5; color: #fff; }
   .pill.running { background: #f97316; color: #fff; }
   .pill.paused  { background: #f97316; color: #fff; }
-  .pill.done    { background: #22c55e; color: #fff; cursor: default; }
+  .pill.done    { background: #22c55e; color: #fff; }
   .pill.error   { background: #ef4444; color: #fff; }
 
   .dot {
@@ -82,6 +82,10 @@ const floatingButton = (() => {
   let onStartCb = null;
   let onPauseCb = null;
   let onScanCb = null;
+  // Set only for the auto-apply pipeline — when present, the DONE state
+  // means "filled, awaiting your confirmation" rather than "done": it stays
+  // on screen indefinitely (no auto-hide) and clicking it logs Applied.
+  let onConfirmCb = null;
   let idleLabel = null;
   let _scanBusy = false;
   let _scanLabel = "💾 Save my answers";
@@ -136,7 +140,7 @@ const floatingButton = (() => {
       [STATES.IDLE]:    idleLabel || "Auto Apply",
       [STATES.RUNNING]: "Pause",
       [STATES.PAUSED]:  "Resume",
-      [STATES.DONE]:    "Applied!",
+      [STATES.DONE]:    onConfirmCb ? "✓ Confirm Applied" : "Applied!",
       [STATES.ERROR]:   "Error — retry?",
     };
     label.textContent = labels[state] || "Auto Apply";
@@ -176,18 +180,24 @@ const floatingButton = (() => {
   }
 
   function handleClick() {
-    if (currentState === STATES.IDLE || currentState === STATES.ERROR) {
+    // Guard each transition on its callback existing — the auto-apply pipeline
+    // only wires onPause/onConfirm (no onStart), so e.g. an ERROR-state click
+    // there must not flip the label to "Pause" with nothing actually running.
+    if ((currentState === STATES.IDLE || currentState === STATES.ERROR) && onStartCb) {
       setState(STATES.RUNNING);
       _isPaused = false;
-      if (onStartCb) onStartCb();
-    } else if (currentState === STATES.RUNNING) {
+      onStartCb();
+    } else if (currentState === STATES.RUNNING && onPauseCb) {
       setState(STATES.PAUSED);
       _isPaused = true;
-      if (onPauseCb) onPauseCb();
-    } else if (currentState === STATES.PAUSED) {
+      onPauseCb();
+    } else if (currentState === STATES.PAUSED && onStartCb) {
       setState(STATES.RUNNING);
       _isPaused = false;
-      if (onStartCb) onStartCb(); // resume = restart from where we left off (handler manages state)
+      onStartCb(); // resume = restart from where we left off (handler manages state)
+    } else if (currentState === STATES.DONE && onConfirmCb) {
+      onConfirmCb();
+      setState(STATES.IDLE);
     }
   }
 
@@ -195,17 +205,21 @@ const floatingButton = (() => {
     currentState = state;
     render(state, progressText);
 
-    if (state === STATES.DONE) {
+    // Plain manual-fill DONE is just a cosmetic flash — auto-hide it. The
+    // auto-apply pipeline's "awaiting confirmation" DONE must stay clickable
+    // until the user confirms, so skip the auto-hide when onConfirmCb is set.
+    if (state === STATES.DONE && !onConfirmCb) {
       setTimeout(() => {
         setState(STATES.IDLE);
       }, 4000);
     }
   }
 
-  function mount({ onStart, onPause, onScan, idleLabel: label }) {
+  function mount({ onStart, onPause, onScan, onConfirm, idleLabel: label }) {
     onStartCb = onStart;
     onPauseCb = onPause;
     onScanCb = onScan || null;
+    onConfirmCb = onConfirm || null;
     idleLabel = label || null;
     init();
     render(STATES.IDLE);
@@ -216,6 +230,7 @@ const floatingButton = (() => {
     host = null;
     shadow = null;
     onScanCb = null;
+    onConfirmCb = null;
     _scanBusy = false;
     _scanLabel = SCAN_LABEL_DEFAULT;
   }
