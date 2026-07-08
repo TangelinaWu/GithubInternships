@@ -307,6 +307,19 @@
           rawHref !== '#' && !rawHref.startsWith('javascript:');
 
         if (isCrossPage) {
+          // A slow/aborted ATS load re-runs this whole detection from scratch
+          // on reload, which can find the same Apply link and open yet another
+          // window every time — cap repeat windows for the same source/target
+          // pair instead of spawning indefinitely.
+          const allowed = await shouldOpenApplyWindow(window.location.href, resolvedUrl);
+          if (!allowed) {
+            chrome.runtime.sendMessage({
+              type: MSG.FILL_LOG,
+              payload: { severity: 'warn', text: '⚠ Same apply link reopened twice already — not opening another window' },
+            }).catch(() => {});
+            return false;
+          }
+
           // Open in a new tab — pendingAutoApply stays in storage so the new
           // tab's init() picks it up and fills the form there.
           openUrlAsNewTab(resolvedUrl);

@@ -66,17 +66,64 @@ chrome.storage.local.remove(['autoApplyQueue', 'autoApplyGithubTabId', 'autoAppl
 let _queueTimer   = null
 let _queueRunning = false
 
+// While paused, a job finishing (or the safety timeout) must NOT open the
+// next tab — that's the whole point (give the user time to sort out a job
+// manually without more piling up behind it). _pendingAdvance remembers that
+// an advance was earned while paused, so Resume can apply it immediately
+// instead of waiting for another completion event that will never come.
+let _queuePaused    = false
+let _pendingAdvance = false
+
+function broadcastQueuePaused(paused) {
+  const payload = { paused }
+  chrome.runtime.sendMessage({ type: MSG.QUEUE_PAUSED, payload }).catch(() => {})
+  chrome.storage.local.get('autoApplyGithubTabId', ({ autoApplyGithubTabId }) => {
+    if (autoApplyGithubTabId) {
+      chrome.tabs.sendMessage(autoApplyGithubTabId, { type: MSG.QUEUE_PAUSED, payload }).catch(() => {})
+    }
+  })
+}
+
+function pauseQueue() {
+  if (!_queueRunning || _queuePaused) return
+  _queuePaused = true
+  if (_queueTimer) { clearTimeout(_queueTimer); _queueTimer = null }
+  broadcastQueuePaused(true)
+}
+
+function resumeQueue() {
+  if (!_queueRunning || !_queuePaused) return
+  _queuePaused = false
+  broadcastQueuePaused(false)
+
+  if (_pendingAdvance) {
+    // A job already finished while we were paused — move on now.
+    _pendingAdvance = false
+    advanceQueue()
+  } else {
+    // Current job is still in flight — just restart the safety timer (the
+    // time spent paused shouldn't count against it) and wait for it to
+    // report completion normally.
+    chrome.storage.local.get('autoApplyQueue', ({ autoApplyQueue }) => {
+      if (autoApplyQueue !== undefined) _queueTimer = setTimeout(advanceQueue, QUEUE_SAFETY_TIMEOUT_MS)
+    })
+  }
+}
+
 // Advance the batch queue, but only if one is actually running — used at
 // every point where a job's automatic processing has concluded (extraction
 // failed, filled-awaiting-confirmation, or fill failed) so the queue keeps
 // moving without waiting on the user's manual Applied/Skip confirmation.
 function advanceQueueIfRunning() {
   chrome.storage.local.get('autoApplyQueue', ({ autoApplyQueue }) => {
-    if (autoApplyQueue !== undefined) advanceQueue()
+    if (autoApplyQueue === undefined) return
+    if (_queuePaused) { _pendingAdvance = true; return }
+    advanceQueue()
   })
 }
 
 function advanceQueue() {
+  if (_queuePaused) { _pendingAdvance = true; return }
   if (_queueTimer) { clearTimeout(_queueTimer); _queueTimer = null }
 
   chrome.storage.local.get(
@@ -89,7 +136,9 @@ function advanceQueue() {
 
       if (!Array.isArray(queue) || queue.length === 0) {
         // All jobs processed
-        _queueRunning = false
+        _queueRunning   = false
+        _queuePaused    = false
+        _pendingAdvance = false
         const donePayload = { done, total }
         if (ghTab) chrome.tabs.sendMessage(ghTab, { type: MSG.QUEUE_DONE, payload: donePayload }).catch(() => {})
         chrome.runtime.sendMessage({ type: MSG.QUEUE_DONE, payload: donePayload }).catch(() => {})
@@ -126,6 +175,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Only one queue at a time — multiple GitHub tabs may fire this simultaneously
     if (_queueRunning) return false
     _queueRunning = true
+    _queuePaused    = false
+    _pendingAdvance = false
 
     const [firstUrl, ...remaining] = urls
     const ghTabId = sender.tab?.id
@@ -145,6 +196,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (_queueTimer) clearTimeout(_queueTimer)
     _queueTimer = setTimeout(advanceQueue, QUEUE_SAFETY_TIMEOUT_MS)
+    return false
+  }
+
+  // ── Batch queue: pause/resume ────────────────────────────────────────────
+  if (message.type === MSG.QUEUE_PAUSE) {
+    pauseQueue()
+    return false
+  }
+  if (message.type === MSG.QUEUE_RESUME) {
+    resumeQueue()
     return false
   }
 

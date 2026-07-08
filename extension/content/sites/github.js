@@ -276,6 +276,15 @@ chrome.runtime.onMessage.addListener((msg) => {
     _autoBtn.disabled = false
     document.querySelectorAll('tr.ghi-current').forEach(el => el.classList.remove('ghi-current'))
   }
+  if (msg.type === MSG.QUEUE_PAUSED) {
+    const { paused } = msg.payload || {}
+    if (paused) {
+      _autoBtn.textContent = `⏸ Paused — resume from the Assessor panel`
+    }
+    // Resuming restores the normal "⏳ done / total" text via the next
+    // QUEUE_PROGRESS message — immediately if a job had already finished
+    // while paused, otherwise once the in-flight one reports completion.
+  }
 })
 
 function expandAllSections() {

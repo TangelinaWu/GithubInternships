@@ -69,3 +69,46 @@ async function addSeenJob(url) {
   seen.add(url);
   await chrome.storage.local.set({ seenJobUrls: [...seen] });
 }
+
+// Jobs whose page couldn't be auto-detected/auto-applied and were skipped
+// from the failed state — kept here (instead of being logged straight to
+// Sheets as Skipped) so the user can revisit and manually apply later.
+async function getNeedsAttention() {
+  const result = await chrome.storage.local.get('needsAttention');
+  return Array.isArray(result.needsAttention) ? result.needsAttention : [];
+}
+
+async function addNeedsAttention(entry) {
+  const list = await getNeedsAttention();
+  const deduped = list.filter(e => e.url !== entry.url);
+  deduped.unshift({ ...entry, addedAt: Date.now() });
+  await chrome.storage.local.set({ needsAttention: deduped });
+  return deduped;
+}
+
+async function removeNeedsAttention(url) {
+  const list = await getNeedsAttention();
+  const next = list.filter(e => e.url !== url);
+  await chrome.storage.local.set({ needsAttention: next });
+  return next;
+}
+
+// Tracks repeat "open the Apply link as a new window" attempts for the same
+// source→target pair. A slow ATS page load that the user stops (or that
+// times out and reloads) re-runs extraction from scratch, which can find the
+// same cross-page Apply link and spawn another window every time — this caps
+// it at two windows for the same pair before giving up.
+const APPLY_CLICK_RETRY_KEY = 'applyClickRetry';
+const APPLY_CLICK_RETRY_LIMIT = 2;
+
+async function shouldOpenApplyWindow(sourceUrl, targetUrl) {
+  const result = await chrome.storage.local.get(APPLY_CLICK_RETRY_KEY);
+  const state = result[APPLY_CLICK_RETRY_KEY];
+  const isSameAttempt = state && state.sourceUrl === sourceUrl && state.targetUrl === targetUrl;
+  const count = isSameAttempt ? state.count : 0;
+  if (count >= APPLY_CLICK_RETRY_LIMIT) return false;
+  await chrome.storage.local.set({
+    [APPLY_CLICK_RETRY_KEY]: { sourceUrl, targetUrl, count: count + 1 },
+  });
+  return true;
+}

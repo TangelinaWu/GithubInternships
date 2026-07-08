@@ -45,24 +45,44 @@ chrome.runtime.sendMessage({ type: MSG.REQUEST_SOURCES }, (resp) => {
 
 // ── Queue progress strip ──────────────────────────────────────────────────────
 
-const queueStrip = document.getElementById('queue-strip')
-const queueFill  = document.getElementById('queue-strip-fill')
-const queueCount = document.getElementById('queue-strip-count')
-const queueLabel = document.getElementById('queue-strip-label')
+const queueStrip  = document.getElementById('queue-strip')
+const queueFill   = document.getElementById('queue-strip-fill')
+const queueCount  = document.getElementById('queue-strip-count')
+const queueLabel  = document.getElementById('queue-strip-label')
+const queuePauseBtn = document.getElementById('queue-strip-pause')
 let   _queueDoneTimer = null
+let   _queuePaused     = false
+
+function setQueuePauseBtn(paused) {
+  _queuePaused = paused
+  queuePauseBtn.textContent = paused ? '▶' : '⏸'
+  queuePauseBtn.title = paused
+    ? 'Resume the queue'
+    : 'Pause the queue so it stops opening new jobs'
+  queuePauseBtn.classList.toggle('resume', paused)
+}
+
+queuePauseBtn.addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: _queuePaused ? MSG.QUEUE_RESUME : MSG.QUEUE_PAUSE })
+})
 
 function showQueueStrip(done, total) {
   if (_queueDoneTimer) { clearTimeout(_queueDoneTimer); _queueDoneTimer = null }
   queueStrip.classList.remove('hidden')
-  queueLabel.textContent = '⏳ Queue'
-  queueLabel.style.color = '#818cf8'
+  queuePauseBtn.classList.remove('hidden')
+  if (!_queuePaused) {
+    queueLabel.textContent = '⏳ Queue'
+    queueLabel.style.color = '#818cf8'
+    queueFill.style.background = '#6366f1'
+  }
   queueCount.textContent = `${done} / ${total}`
-  queueFill.style.background = '#6366f1'
   queueFill.style.width = total > 0 ? `${Math.round((done / total) * 100)}%` : '0%'
 }
 
 function doneQueueStrip(done, total) {
+  setQueuePauseBtn(false)
   queueStrip.classList.remove('hidden')
+  queuePauseBtn.classList.add('hidden')
   queueLabel.textContent = '✓ Done'
   queueLabel.style.color = '#4ade80'
   queueCount.textContent = `${done} / ${total}`
@@ -75,25 +95,111 @@ function doneQueueStrip(done, total) {
 
 const tabAssess = document.getElementById('tab-assess')
 const tabAi     = document.getElementById('tab-ai')
+const tabReview = document.getElementById('tab-review')
 const tabLog    = document.getElementById('tab-log')
 const paneAssess = document.getElementById('pane-assess')
 const paneAi     = document.getElementById('pane-ai')
+const paneReview = document.getElementById('pane-review')
 const paneLog    = document.getElementById('pane-log')
 const aiBadge    = document.getElementById('ai-badge')
 const assessBadge = document.getElementById('assess-badge')
+const reviewBadge = document.getElementById('review-badge')
 
 tabAssess.addEventListener('click', () => switchTab('assess'))
 tabAi.addEventListener('click',     () => { switchTab('ai'); aiBadge.classList.add('hidden') })
+tabReview.addEventListener('click', () => switchTab('review'))
 tabLog.addEventListener('click',    () => switchTab('log'))
 
 function switchTab(which) {
   tabAssess.classList.toggle('tab-active', which === 'assess')
   tabAi.classList.toggle('tab-active',     which === 'ai')
+  tabReview.classList.toggle('tab-active', which === 'review')
   tabLog.classList.toggle('tab-active',    which === 'log')
   paneAssess.classList.toggle('hidden', which !== 'assess')
   paneAi.classList.toggle('hidden',     which !== 'ai')
+  paneReview.classList.toggle('hidden', which !== 'review')
   paneLog.classList.toggle('hidden',    which !== 'log')
 }
+
+// ── Review pane — jobs skipped from the Failed state ───────────────────────
+// These couldn't be auto-detected/auto-applied. Rather than logging them as
+// Skipped immediately, they're parked here so the user can reopen the page
+// and mark it Applied by hand later. Marked seen right away so they don't
+// keep reopening from future auto-apply queue runs.
+
+const reviewEmpty = document.getElementById('review-empty')
+const reviewList  = document.getElementById('review-list')
+
+function renderReview(list) {
+  reviewBadge.textContent = list.length
+  reviewBadge.classList.toggle('hidden', list.length === 0)
+  reviewEmpty.classList.toggle('hidden', list.length > 0)
+
+  reviewList.innerHTML = list.map(item => `
+    <div class="review-item" data-url="${esc(item.url)}">
+      <div class="review-item-company">${esc(item.company)}</div>
+      <div class="review-item-role">${esc(item.title)}</div>
+      <div class="review-item-reason">${esc(item.reason)}</div>
+      <div class="review-item-actions">
+        <button class="review-reopen">↗ Reopen</button>
+        <button class="review-applied">✓ Applied</button>
+        <button class="review-dismiss">✕ Dismiss</button>
+      </div>
+    </div>
+  `).join('')
+}
+
+async function refreshReview() {
+  renderReview(await getNeedsAttention())
+}
+
+reviewList.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button')
+  if (!btn) return
+  const itemEl = btn.closest('.review-item')
+  const url = itemEl?.dataset.url
+  if (!url) return
+
+  const list = await getNeedsAttention()
+  const item = list.find(it => it.url === url)
+  if (!item) return
+
+  if (btn.classList.contains('review-reopen')) {
+    window.open(url, '_blank', 'noopener')
+    return
+  }
+
+  if (btn.classList.contains('review-applied')) {
+    chrome.runtime.sendMessage({
+      type: MSG.LOG_APPLICATION,
+      payload: {
+        site: 'github', company: item.company, role: item.title, url: item.url,
+        sourceRepo: item.sourceRepo, decision: 'APPLIED',
+        reason: 'Manually applied after review',
+      },
+    })
+    addLog(`✓ Marked applied — ${item.company} · ${item.title || ''}`, 'success')
+    await removeNeedsAttention(url)
+    refreshReview()
+    return
+  }
+
+  if (btn.classList.contains('review-dismiss')) {
+    chrome.runtime.sendMessage({
+      type: MSG.LOG_APPLICATION,
+      payload: {
+        site: 'github', company: item.company, role: item.title, url: item.url,
+        sourceRepo: item.sourceRepo, decision: 'SKIPPED',
+        reason: 'Skipped after review',
+      },
+    })
+    addLog(`Skipped — ${item.company} · ${item.title || ''}`, 'skip')
+    await removeNeedsAttention(url)
+    refreshReview()
+  }
+})
+
+refreshReview()
 
 // ── Assess pane states ────────────────────────────────────────────────────────
 
@@ -247,21 +353,21 @@ document.getElementById('btn-failed-applied').addEventListener('click', () => {
   showIdle()
 })
 
-document.getElementById('btn-failed-skip').addEventListener('click', () => {
+document.getElementById('btn-failed-skip').addEventListener('click', async () => {
   if (!_currentJob) return
-  chrome.runtime.sendMessage({
-    type: MSG.LOG_APPLICATION,
-    payload: {
-      site:     'github',
-      company:  _currentJob.company,
-      role:     _currentJob.title || _currentJob.role || '',
-      url:      _currentJob.url,
-      sourceRepo: _currentJob.sourceRepo,
-      decision: 'SKIPPED',
-      reason:   'User skipped after auto-apply could not finish',
-    },
-  })
-  addLog(`Skipped — ${_currentJob.company} · ${_currentJob.title || _currentJob.role || ''}`, 'skip')
+  const entry = {
+    company:    _currentJob.company,
+    title:      _currentJob.title || _currentJob.role || '',
+    url:        _currentJob.url,
+    sourceRepo: _currentJob.sourceRepo,
+    reason:     _currentJob.reason || 'Auto-apply did not finish',
+  }
+  // Mark seen now so the batch queue / GitHub row highlighting doesn't keep
+  // reopening this same page — it's parked in Review until resolved by hand.
+  if (entry.url) await addSeenJob(entry.url)
+  await addNeedsAttention(entry)
+  refreshReview()
+  addLog(`↻ Needs review — ${entry.company} · ${entry.title}`, 'skip')
   showIdle()
 })
 
@@ -273,6 +379,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === MSG.QUEUE_START) {
     const { total } = msg.payload || {}
     _queueActive = true
+    setQueuePauseBtn(false)
     renderSources()
     showQueueStrip(0, total || 0)
     addLog(`Queue started — ${total} jobs to process`, 'system')
@@ -290,6 +397,15 @@ chrome.runtime.onMessage.addListener((msg) => {
     renderSources()
     doneQueueStrip(done, total)
     addLog(`Queue complete — ${done} / ${total} processed`, 'success')
+  }
+
+  if (msg.type === MSG.QUEUE_PAUSED) {
+    const { paused } = msg.payload || {}
+    setQueuePauseBtn(paused)
+    queueLabel.textContent = paused ? '⏸ Paused' : '⏳ Queue'
+    queueLabel.style.color = paused ? '#f59e0b' : '#818cf8'
+    queueFill.style.background = paused ? '#f59e0b' : '#6366f1'
+    addLog(paused ? 'Queue paused — no new jobs will open' : 'Queue resumed', 'system')
   }
 
   // ── Known source tabs changed ────────────────────────────────────────────

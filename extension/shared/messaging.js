@@ -74,6 +74,15 @@ const MSG = {
   QUEUE_PROGRESS: 'QUEUE_PROGRESS',
   QUEUE_DONE:     'QUEUE_DONE',
 
+  // Control → Background: pause/resume the batch queue — stops it from
+  // opening the next job so the user can catch up on one that needs manual
+  // attention without more jobs piling up behind it.
+  QUEUE_PAUSE:  'QUEUE_PAUSE',
+  QUEUE_RESUME: 'QUEUE_RESUME',
+  // Background → Control/GitHub tab: current paused state, so the UI reflects
+  // it even if it wasn't the tab that requested the change.
+  QUEUE_PAUSED: 'QUEUE_PAUSED',
+
   // Background → GitHub tab: open this job URL as a new tab. Routed through
   // the content script's own window.open/anchor-click instead of
   // chrome.tabs.create — the extension tabs API doesn't reliably create a

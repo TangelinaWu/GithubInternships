@@ -10,6 +10,7 @@
   <div id="tab-bar">
     <button id="tab-assess" class="tab tab-active">Assess <span id="assess-badge" class="hidden"></span></button>
     <button id="tab-ai"     class="tab">Fields <span id="ai-badge" class="hidden"></span></button>
+    <button id="tab-review" class="tab">Review <span id="review-badge" class="hidden"></span></button>
     <button id="tab-log"    class="tab">Log</button>
   </div>
 
@@ -18,6 +19,7 @@
     <span id="queue-strip-label">⏳ Queue</span>
     <div id="queue-strip-bar"><div id="queue-strip-fill"></div></div>
     <span id="queue-strip-count">0 / 0</span>
+    <button id="queue-strip-pause" title="Pause the queue so it stops opening new jobs">⏸</button>
   </div>
 
   <!-- ── Assess pane ──────────────────────────────────────────────────── -->
@@ -85,9 +87,9 @@
       <div id="failed-company"></div>
       <div id="failed-role"></div>
       <div id="failed-reason"></div>
-      <div id="failed-hint">If you finished this one by hand, mark it applied so it's logged.</div>
+      <div id="failed-hint">If you finished this one by hand, mark it applied so it's logged. Otherwise, Skip sends it to the Review tab so you can come back to it.</div>
       <div id="failed-actions">
-        <button id="btn-failed-skip">✕ Skip</button>
+        <button id="btn-failed-skip">↻ Review later</button>
         <button id="btn-failed-applied">✓ I Applied</button>
       </div>
     </div>
@@ -107,6 +109,12 @@
         <button id="ai-use" disabled>Use answer</button>
       </div>
     </div>
+  </div>
+
+  <!-- ── Review pane — jobs that couldn't be auto-detected/applied ──────── -->
+  <div id="pane-review" class="hidden">
+    <div id="review-empty">Nothing needs attention.<br>Jobs Skipped from the Failed state land here so you can revisit and apply manually.</div>
+    <div id="review-list"></div>
   </div>
 
   <!-- ── Activity log pane ────────────────────────────────────────────── -->
