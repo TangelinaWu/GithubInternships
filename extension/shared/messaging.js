@@ -16,6 +16,10 @@ const MSG = {
   // Content → Background: analyze fit between job description and user profile
   CHECK_FIT: 'CHECK_FIT',
 
+  // Content → Background: tailor the master resume to this job description and
+  // swap it in as the active resume (mirrors JobApplier's job_automation pipeline).
+  TAILOR_RESUME: 'TAILOR_RESUME',
+
   // Background → Control: fit check result is ready
   FIT_RESULT: 'FIT_RESULT',
 

@@ -112,8 +112,9 @@ async function waitForStructuredResponse() {
     const text      = document.body.innerText
     const textUpper = text.toUpperCase()
 
-    // Primary: look for FIELD + DEGREE + REASON (case-insensitive)
-    const lastField = textUpper.lastIndexOf('FIELD:')
+    // Primary: look for TIMING + DEGREE + REASON (case-insensitive) — mirrors
+    // the four-gate prompt in background.js's buildFitAnalysisPrompt.
+    const lastField = textUpper.lastIndexOf('TIMING:')
     const hasStructure = lastField !== -1
       && textUpper.slice(lastField).includes('DEGREE:')
       && textUpper.slice(lastField).includes('REASON:')
@@ -182,7 +183,10 @@ function parseJobAnalysis(text) {
   const textUpper = text.toUpperCase()
 
   // ── Structured path ───────────────────────────────────────────────────────
-  const fieldIdx = textUpper.lastIndexOf('FIELD:')
+  // Mirrors the four gate criteria in background.js's buildFitAnalysisPrompt
+  // (TIMING, SCAM, DEGREE, PAID) — kept identical to JobApplier's linkedin.js
+  // _buildClaudePrompt output format.
+  const fieldIdx = textUpper.lastIndexOf('TIMING:')
   if (fieldIdx !== -1) {
     const preField = text.slice(0, fieldIdx)
     const preLines = preField.split('\n').map(l => l.trim().toUpperCase())
@@ -191,18 +195,18 @@ function parseJobAnalysis(text) {
     if (verdict) {
       const decision = verdict === 'YES' ? 'APPLY' : 'SKIP'
       const block = text.slice(fieldIdx)
-      const fieldMatch      = block.match(/FIELD:\s*(YES|NO)/i)
-      const degreeMatch     = block.match(/DEGREE:\s*(YES|NO)/i)
-      const paidMatch       = block.match(/PAID:\s*(YES|NO)/i)
-      const experienceMatch = block.match(/EXPERIENCE:\s*(YES|NO)/i)
-      const reasonMatch     = block.match(/REASON:\s*([^\n]+)/i)
+      const timingMatch = block.match(/TIMING:\s*(YES|NO)/i)
+      const scamMatch    = block.match(/SCAM:\s*(YES|NO)/i)
+      const degreeMatch  = block.match(/DEGREE:\s*(YES|NO)/i)
+      const paidMatch    = block.match(/PAID:\s*(YES|NO)/i)
+      const reasonMatch  = block.match(/REASON:\s*([^\n]+)/i)
       return {
         decision,
         criteria: {
-          field:      fieldMatch?.[1]?.toUpperCase(),
-          degree:     degreeMatch?.[1]?.toUpperCase(),
-          paid:       paidMatch?.[1]?.toUpperCase(),
-          experience: experienceMatch?.[1]?.toUpperCase(),
+          timing: timingMatch?.[1]?.toUpperCase(),
+          scam:   scamMatch?.[1]?.toUpperCase(),
+          degree: degreeMatch?.[1]?.toUpperCase(),
+          paid:   paidMatch?.[1]?.toUpperCase(),
         },
         reason: (reasonMatch?.[1] || '').trim().slice(0, 200),
       }

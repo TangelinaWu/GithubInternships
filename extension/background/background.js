@@ -217,6 +217,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
+  // ── Resume tailoring (mirrors JobApplier's job_automation pipeline) ─────
+  if (message.type === MSG.TAILOR_RESUME) {
+    handleTailorResume(message.payload)
+      .then(sendResponse)
+      .catch(err => sendResponse({ error: err.message }))
+    return true
+  }
+
   // ── Scan manually-filled-in answers → merge into answers.json ──────────
   if (message.type === MSG.SCAN_ANSWERS) {
     handleScanAnswers(message.payload)
@@ -457,18 +465,22 @@ async function handleClaudeRequest({ question, fieldContext, fieldLabel }) {
   return { suggestion }
 }
 
+// Mirrors JobApplier's job_automation linkedin.js _buildClaudePrompt exactly —
+// same four gate criteria (TIMING, SCAM, DEGREE, PAID), same instruction NOT to
+// evaluate skill fit (that's resume_tailor's job, run separately per job via
+// handleTailorResume). Kept in sync deliberately per Angelina's ask that both
+// apps' fit-gate ask Claude "the same exact things."
 function buildFitAnalysisPrompt(profile, jobDescription) {
-  const name   = `${profile.firstName || ''} ${profile.lastName || ''}`.trim()
-  const yrs    = profile.yearsOfExperience || 1
-  const degree = [profile.highestDegree, profile.fieldOfStudy, profile.university].filter(Boolean).join(' in ')
+  const name      = `${profile.firstName || ''} ${profile.lastName || ''}`.trim()
+  const startDate = profile.availableStartDate || 'as soon as a good fit is found'
 
-  return `Evaluate whether this candidate should apply to this internship/job.
+  return `I'm deciding whether to apply for this role. Check it against these four gate criteria ONLY — do NOT evaluate whether my skills/experience match the job description itself, since I tailor my resume separately to fit each posting.
 
-CANDIDATE:
-Name: ${name}
-Degree: ${degree}${profile.gpa ? ` (GPA: ${profile.gpa})` : ''}
-Years of experience: ${yrs}
-Skills: ${(profile.skills || '').slice(0, 300)}${profile.workExperience ? `\nWork: ${profile.workExperience.slice(0, 400)}` : ''}
+CRITERIA:
+1. TIMING — is the role's timeline (start date, duration, application deadline) workable for a full-time undergrad available starting ${startDate}? (a summer/semester internship or a remote/flexible role is fine; a role demanding immediate full-time relocation during the school year is not)
+2. SCAM — does this look like a legitimate posting, with none of the common scam red flags (requests for payment or bank/personal financial info upfront, unrealistic pay for no experience, vague or missing company info, pressure to move off-platform immediately, etc.)?
+3. DEGREE — does this role accept a current undergraduate student — no requirement that I already hold a Bachelor's/Master's/PhD, and no age requirement that would exclude a college student? (I'm ${name || 'the candidate'}, currently an undergrad at NYU double-majoring in Computer Science & Economics or Computer Science & Mathematics)
+4. PAID — is this a paid position (not unpaid/volunteer/academic-credit-only)?
 
 PAGE TEXT (the whole page's visible text — a real job description is in
 here somewhere, along with nav/footer/cookie-banner noise; ignore the noise):
@@ -477,10 +489,10 @@ ${(jobDescription || '').slice(0, 6000)}
 ---
 On the very first line write only YES (apply) or NO (skip), then on separate lines:
 
-FIELD: YES (job is in a STEM/tech field) or NO
-DEGREE: YES (candidate's degree qualifies) or NO
-PAID: YES (this is a paid position) or NO
-EXPERIENCE: YES (experience requirement is ≤${yrs + 1} year(s)) or NO
+TIMING: YES or NO
+SCAM: YES (no red flags) or NO
+DEGREE: YES or NO
+PAID: YES or NO
 REASON: one-sentence explanation`
 }
 
@@ -571,6 +583,44 @@ async function handleFitCheck({ jobDescription }) {
     matching:       [],
     missing,
     recommendation: result.reason || (isApply ? 'Claude says: Apply' : 'Claude says: Skip'),
+  }
+}
+
+// Calls the local Electron-hosted server (sheets-server.js) to tailor the
+// master resume to this job description via JobApplier's own resume_tailor
+// engine. On success, the tailored PDF is saved into resumes/ AND swapped in
+// as the active resume so every ATS site's file-upload step (formFiller.js)
+// picks it up automatically. Mirrors JobApplier's job_automation
+// handleTailorResume exactly — same request/response shape, same profile swap.
+async function handleTailorResume({ jobDescription, jobTitle, company }) {
+  if (!jobDescription) return { error: 'NO_JOB_DESCRIPTION' }
+
+  let response
+  try {
+    response = await fetch(`http://127.0.0.1:${SHEETS_PORT}/tailor-resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobDescription, jobTitle, company }),
+    })
+  } catch (err) {
+    return { error: 'NETWORK_ERROR: ' + err.message }
+  }
+
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || data.error) {
+    return { error: data.error || `SERVER_ERROR ${response.status}` }
+  }
+
+  await saveProfile({
+    resumeFileName: data.fileName,
+    resumeDataUrl: data.pdfDataUrl,
+  })
+
+  return {
+    fileName: data.fileName,
+    pdfPath: data.pdfPath,
+    fitScore: data.fitScore,
+    fitReason: data.fitReason,
   }
 }
 

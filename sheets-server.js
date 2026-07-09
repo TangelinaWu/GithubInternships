@@ -3,8 +3,14 @@ const http   = require('http')
 const fs     = require('fs')
 const path   = require('path')
 const crypto = require('crypto')
+// Reused directly from the sibling JobApplier project — never fork/duplicate this
+// module. Its tailoring prompt, 1-page constraints, and Jake's-format renderer are
+// Angelina's own requirements and must stay identical across both apps.
+const tailorEngine = require('../../JobApplier/resume_tailor/tailorEngine')
 
 const PORT        = 3743   // different from JobApplier (3742) so both can run simultaneously
+const MASTER_RESUME_FILE = path.join(__dirname, 'credentials', 'master_resume.json')
+const RESUMES_DIR        = path.join(__dirname, 'resumes')
 
 // Physical-click bridge: electron-main.js registers a handler here so content
 // scripts can request a native OS-level click via HTTP (no Playwright needed).
@@ -361,6 +367,44 @@ async function getSeenUrls() {
   return [...new Set([...appliedUrls, ...skippedUrls])]
 }
 
+// Sanitize a company/role string into a safe filename fragment.
+function slugify(str) {
+  return String(str || '')
+    .trim()
+    .replace(/[^a-z0-9]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60) || 'untitled'
+}
+
+// Mirrors JobApplier's job_automation/sheets-server.js tailorResumeForJob —
+// asks Claude (via tailorEngine's own hidden claude.ai window) to tailor the
+// master resume to this job description, renders it to PDF, and saves it into
+// resumes/. Returns { pdfPath, pdfDataUrl, fileName, fitScore, fitReason }.
+async function tailorResumeForJob({ jobDescription, jobTitle, company }) {
+  if (!fs.existsSync(MASTER_RESUME_FILE)) {
+    throw new Error('credentials/master_resume.json not found')
+  }
+  const masterResume = JSON.parse(fs.readFileSync(MASTER_RESUME_FILE, 'utf8'))
+
+  const result = await tailorEngine.runTailorFlow({ jobDescription, masterResume, show: false })
+  const state  = tailorEngine.buildStateFromResult(masterResume, result)
+  const html   = tailorEngine.buildJakesHTML(state)
+  const pdfBuffer = await tailorEngine.renderResumeToPdfBuffer(html)
+
+  if (!fs.existsSync(RESUMES_DIR)) fs.mkdirSync(RESUMES_DIR, { recursive: true })
+  const fileName = `${slugify(company)}_${slugify(jobTitle)}_${Date.now()}.pdf`
+  const pdfPath  = path.join(RESUMES_DIR, fileName)
+  fs.writeFileSync(pdfPath, pdfBuffer)
+
+  return {
+    pdfPath,
+    fileName,
+    pdfDataUrl: `data:application/pdf;base64,${pdfBuffer.toString('base64')}`,
+    fitScore: result.fitScore,
+    fitReason: result.fitReason,
+  }
+}
+
 function startServer() {
   const enabled = loadConfig()
 
@@ -416,6 +460,36 @@ function startServer() {
           .catch(err => {
             res.writeHead(500, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({ error: err.message }))
+          })
+      })
+      return
+    }
+
+    // Resume tailoring works independently of Google Sheets configuration.
+    if (req.method === 'POST' && req.url === '/tailor-resume') {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => {
+        let payload
+        try { payload = JSON.parse(body) } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Bad JSON' }))
+          return
+        }
+        if (!payload.jobDescription) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'jobDescription is required' }))
+          return
+        }
+        tailorResumeForJob(payload)
+          .then(out => {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ ok: true, ...out }))
+          })
+          .catch(e => {
+            console.error('[ResumeTailor] tailorResumeForJob error:', e.message)
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: e.message }))
           })
       })
       return

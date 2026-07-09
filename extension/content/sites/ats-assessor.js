@@ -5,6 +5,37 @@
 ;(async () => {
   function wait(ms) { return new Promise(r => setTimeout(r, ms)) }
 
+  // Best-effort: tailors the master resume to this job description and swaps
+  // it in as the active resume (via background.js → local server → resumes/),
+  // mirroring JobApplier's job_automation linkedin.js _tailorResume. Never
+  // blocks or fails the apply flow — falls back to whatever resume is already
+  // configured if tailoring times out or errors.
+  async function tailorResumeBeforeApply(title, company, fullDescription) {
+    if (!fullDescription) return
+    try {
+      const result = await chrome.runtime.sendMessage({
+        type: MSG.TAILOR_RESUME,
+        payload: { jobDescription: fullDescription, jobTitle: title || '', company: company || '' },
+      })
+      if (result?.error) {
+        chrome.runtime.sendMessage({
+          type: MSG.FILL_LOG,
+          payload: { label: 'Resume tailoring skipped', status: result.error, text: `Resume tailoring skipped (${result.error})`, severity: 'warn' },
+        }).catch(() => {})
+      } else if (result?.fileName) {
+        chrome.runtime.sendMessage({
+          type: MSG.FILL_LOG,
+          payload: { label: 'Resume tailored', status: `${result.fileName} (fit ${result.fitScore ?? '?'}%)`, text: `Resume tailored — ${result.fileName} (fit ${result.fitScore ?? '?'}%)` },
+        }).catch(() => {})
+      }
+    } catch (e) {
+      chrome.runtime.sendMessage({
+        type: MSG.FILL_LOG,
+        payload: { label: 'Resume tailoring failed', status: e.message, text: `Resume tailoring failed: ${e.message}`, severity: 'warn' },
+      }).catch(() => {})
+    }
+  }
+
   // ── Description extraction (universal — no per-ATS selectors) ────────────
   //
   // Every internship listing links to a different ATS with its own HTML, so
@@ -227,26 +258,28 @@
       chrome.runtime.onMessage.removeListener(handler)
 
       if (msg.type === MSG.GH_DO_APPLY) {
-        chrome.storage.local.set({
-          pendingAutoApply: {
-            company: company || new URL(url).hostname,
-            role:    title   || '',
-            url, sourceRepo,
-            description: desc.slice(0, 600),
-            score:       fitResult?.score,
-            scoreLabel:  fitResult?.scoreLabel,
-            matching:    fitResult?.matching || [],
-            missing:     fitResult?.missing  || [],
-          },
-        }, () => {
-          fetch('http://127.0.0.1:3743/physical-click', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ url: location.href }),
+        tailorResumeBeforeApply(title, company, desc).then(() => {
+          chrome.storage.local.set({
+            pendingAutoApply: {
+              company: company || new URL(url).hostname,
+              role:    title   || '',
+              url, sourceRepo,
+              description: desc.slice(0, 600),
+              score:       fitResult?.score,
+              scoreLabel:  fitResult?.scoreLabel,
+              matching:    fitResult?.matching || [],
+              missing:     fitResult?.missing  || [],
+            },
+          }, () => {
+            fetch('http://127.0.0.1:3743/physical-click', {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ url: location.href }),
+            })
+              .then(r => r.json())
+              .then(result => { if (!result.clicked && typeof window._ghiTriggerAutoFill === 'function') window._ghiTriggerAutoFill() })
+              .catch(() => { if (typeof window._ghiTriggerAutoFill === 'function') window._ghiTriggerAutoFill() })
           })
-            .then(r => r.json())
-            .then(result => { if (!result.clicked && typeof window._ghiTriggerAutoFill === 'function') window._ghiTriggerAutoFill() })
-            .catch(() => { if (typeof window._ghiTriggerAutoFill === 'function') window._ghiTriggerAutoFill() })
         })
       }
 
@@ -264,9 +297,12 @@
       }
     })
   } else if (fitResult?.decision === 'YES') {
-    // Claude says apply — request a physical OS-level click on the Apply button,
-    // then fill the form after the page navigates.  Fall back to JS click if the
+    // Claude says apply — tailor the resume to this job description first (best
+    // effort; swaps in as the active resume before the ATS form's file-upload
+    // step runs), then request a physical OS-level click on the Apply button,
+    // then fill the form after the page navigates. Fall back to JS click if the
     // Electron server is unavailable.
+    await tailorResumeBeforeApply(title, company, desc)
     chrome.storage.local.set({
       pendingAutoApply: {
         company: company || new URL(url).hostname,
