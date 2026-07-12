@@ -6,7 +6,7 @@ const crypto = require('crypto')
 // Reused directly from the sibling JobApplier project — never fork/duplicate this
 // module. Its tailoring prompt, 1-page constraints, and Jake's-format renderer are
 // Angelina's own requirements and must stay identical across both apps.
-const tailorEngine = require('../../JobApplier/resume_tailor/tailorEngine')
+const tailorEngine = require('../JobApplier/resume_tailor/tailorEngine')
 
 const PORT        = 3743   // different from JobApplier (3742) so both can run simultaneously
 const MASTER_RESUME_FILE = path.join(__dirname, 'credentials', 'master_resume.json')

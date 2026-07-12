@@ -119,9 +119,9 @@ async function waitForStructuredResponse() {
       && textUpper.slice(lastField).includes('DEGREE:')
       && textUpper.slice(lastField).includes('REASON:')
 
-    // Fallback: any line that is exactly YES or NO
+    // Fallback: any line that starts with YES or NO (allow trailing text like "YES (apply)")
     const hasVerdict = !hasStructure
-      && textUpper.split('\n').some(l => /^\s*(YES|NO)[.!?]?\s*$/.test(l))
+      && textUpper.split('\n').some(l => /^\s*(YES|NO)\b/.test(l))
 
     if (hasStructure || hasVerdict) {
       if (text === lastText) {
@@ -190,10 +190,10 @@ function parseJobAnalysis(text) {
   if (fieldIdx !== -1) {
     const preField = text.slice(0, fieldIdx)
     const preLines = preField.split('\n').map(l => l.trim().toUpperCase())
-    const verdict  = [...preLines].reverse().find(l => /^(YES|NO)[.!?]?$/.test(l))
+    const verdict  = [...preLines].reverse().find(l => /^(YES|NO)\b/.test(l))
 
     if (verdict) {
-      const decision = verdict === 'YES' ? 'APPLY' : 'SKIP'
+      const decision = verdict.startsWith('YES') ? 'APPLY' : 'SKIP'
       const block = text.slice(fieldIdx)
       const timingMatch = block.match(/TIMING:\s*(YES|NO)/i)
       const scamMatch    = block.match(/SCAM:\s*(YES|NO)/i)
@@ -215,9 +215,9 @@ function parseJobAnalysis(text) {
 
   // ── Fallback: plain YES / NO without structured keywords ─────────────────
   const lines = text.split('\n').map(l => l.trim().toUpperCase())
-  const plain = lines.find(l => /^(YES|NO)[.!?]?$/.test(l))
+  const plain = lines.find(l => /^(YES|NO)\b/.test(l))
   if (plain) {
-    const reasonLine = text.split('\n').find(l => l.trim().length > 5 && !/^(YES|NO)[.!?]?$/i.test(l.trim()))
+    const reasonLine = text.split('\n').find(l => l.trim().length > 5 && !/^(YES|NO)\b/i.test(l.trim()))
     return {
       decision: plain.startsWith('YES') ? 'APPLY' : 'SKIP',
       criteria: {},
