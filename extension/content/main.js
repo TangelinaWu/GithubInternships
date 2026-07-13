@@ -96,6 +96,18 @@
       if (pendingAutoApply) {
         initialized = true;
         const jobInfo = pendingAutoApply;
+
+        // Stop immediately if this page is a login/sign-up wall — filling a
+        // login form with profile data does nothing useful and confuses the user.
+        if (isAuthWall()) {
+          chrome.storage.local.remove('pendingAutoApply');
+          chrome.runtime.sendMessage({
+            type: MSG.AUTO_APPLY_FAILED,
+            payload: { ...jobInfo, reason: 'This page requires signing in or creating an account — please log in and then reopen the job' },
+          }).catch(() => {});
+          return;
+        }
+
         chrome.runtime.sendMessage({ type: MSG.AUTO_APPLY_FILLING, payload: jobInfo }).catch(() => {});
 
         // Click any intermediate "Apply" button.
@@ -174,6 +186,20 @@
         return { label: `✓ Saved ${resp.saved}` };
       },
     });
+  }
+
+  // Returns true if the current page is a login / sign-up / verification wall.
+  // Mirrors the check in ats-assessor.js so both the assessor and the auto-fill
+  // path bail out early instead of grinding on a page that needs a manual login.
+  function isAuthWall() {
+    const authPathRe = /\/(login|signin|sign-in|sign_in|register|signup|sign-up|sign_up|auth|authenticate|create[-_]account|account\/new|sso|oauth)\b/i
+    if (authPathRe.test(location.pathname)) return true
+    if (/\b(sign in|log in|login|create (an? )?account|sign up|register|verify your (email|identity))\b/i.test(document.title)) return true
+    const hasPassword = !!document.querySelector('input[type="password"]')
+    const hasAppForm  = !!document.querySelector(
+      'form input[type="file"], form input[name*="resume" i], form input[name*="cover" i]'
+    )
+    return hasPassword && !hasAppForm
   }
 
   // Known Apply-button selectors per ATS — the button markup differs a lot
@@ -365,6 +391,14 @@
     );
     if (!jobInfo) return;
     initialized = true;
+    if (isAuthWall()) {
+      chrome.storage.local.remove('pendingAutoApply');
+      chrome.runtime.sendMessage({
+        type: MSG.AUTO_APPLY_FAILED,
+        payload: { ...jobInfo, reason: 'This page requires signing in or creating an account — please log in and then reopen the job' },
+      }).catch(() => {});
+      return;
+    }
     chrome.runtime.sendMessage({ type: MSG.AUTO_APPLY_FILLING, payload: jobInfo }).catch(() => {});
     // If a new tab was opened for the form, pendingAutoApply stays in storage
     // so that tab's init() can pick it up. Nothing more to do in this context.

@@ -465,7 +465,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       company:  msg.payload?.company,
       url:      msg.payload?.url,
       sourceRepo: msg.payload?.sourceRepo,
-      reason:   'Auto-apply could not fill or submit this form',
+      reason:   msg.payload?.reason || 'Auto-apply could not fill or submit this form',
     })
   }
 

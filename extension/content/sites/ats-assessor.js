@@ -56,6 +56,30 @@
     return text
   }
 
+  // ── Auth-wall detection ───────────────────────────────────────────────────
+  // Login, sign-up, and verification pages look like job pages to the
+  // extraction loop (they have text, they have forms) but they're not. Detect
+  // them up front so we can prompt the user immediately rather than wasting
+  // the full 8-second retry loop before failing.
+
+  function isAuthWall() {
+    // URL path is the most reliable signal — available at page-load time
+    const authPathRe = /\/(login|signin|sign-in|sign_in|register|signup|sign-up|sign_up|auth|authenticate|create[-_]account|account\/new|sso|oauth)\b/i
+    if (authPathRe.test(location.pathname)) return true
+
+    // Page title (also available immediately)
+    if (/\b(sign in|log in|login|create (an? )?account|sign up|register|verify your (email|identity))\b/i.test(document.title)) return true
+
+    // Password field present but no application-form indicators
+    const hasPassword = !!document.querySelector('input[type="password"]')
+    const hasAppForm  = !!document.querySelector(
+      'form input[type="file"], form input[name*="resume" i], form input[name*="cover" i]'
+    )
+    if (hasPassword && !hasAppForm) return true
+
+    return false
+  }
+
   // A long selected-text blob alone isn't a safe enough signal that this is
   // actually a job page (this runs on every site now, not just known ATS
   // platforms) — news articles, docs, wikis would all match. Require either
@@ -148,6 +172,25 @@
   }
 
   // ── Main logic ────────────────────────────────────────────────────────────
+
+  // Check for auth walls before committing to the extraction loop.
+  // URL and title checks are instant; wait 1 s for JS-gated auth pages
+  // (SSO redirects, login popups) to render their DOM before the DOM check.
+  if (!isAuthWall()) await wait(1000)
+  if (isAuthWall()) {
+    const url        = location.href
+    const sourceRepo = await getSourceRepo()
+    chrome.runtime.sendMessage({
+      type: MSG.GH_ASSESS_FAILED,
+      payload: {
+        title:      document.title || '(unknown role)',
+        company:    new URL(url).hostname,
+        url, sourceRepo,
+        reason: 'This page requires signing in or creating an account — please log in and then reopen the job',
+      },
+    }).catch(() => {})
+    return
+  }
 
   // Wait for page to fully render (especially SPAs like Workday).
   // Retry extraction up to 4 times with growing delays — ATS portals often
