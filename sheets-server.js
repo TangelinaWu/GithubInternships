@@ -10,7 +10,7 @@ const tailorEngine = require('../JobApplier/resume_tailor/tailorEngine')
 
 const PORT        = 3743   // different from JobApplier (3742) so both can run simultaneously
 const MASTER_RESUME_FILE = path.join(__dirname, 'credentials', 'master_resume.json')
-const RESUMES_DIR        = path.join(__dirname, 'resumes')
+const RESUMES_DIR        = path.join(__dirname, 'resume')
 
 // Physical-click bridge: electron-main.js registers a handler here so content
 // scripts can request a native OS-level click via HTTP (no Playwright needed).
@@ -379,7 +379,7 @@ function slugify(str) {
 // Mirrors JobApplier's job_automation/sheets-server.js tailorResumeForJob —
 // asks Claude (via tailorEngine's own hidden claude.ai window) to tailor the
 // master resume to this job description, renders it to PDF, and saves it into
-// resumes/. Returns { pdfPath, pdfDataUrl, fileName, fitScore, fitReason }.
+// resume/. Returns { pdfPath, pdfDataUrl, fileName, fitScore, fitReason }.
 async function tailorResumeForJob({ jobDescription, jobTitle, company }) {
   if (!fs.existsSync(MASTER_RESUME_FILE)) {
     throw new Error('credentials/master_resume.json not found')

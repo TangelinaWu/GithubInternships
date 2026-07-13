@@ -588,7 +588,7 @@ async function handleFitCheck({ jobDescription }) {
 
 // Calls the local Electron-hosted server (sheets-server.js) to tailor the
 // master resume to this job description via JobApplier's own resume_tailor
-// engine. On success, the tailored PDF is saved into resumes/ AND swapped in
+// engine. On success, the tailored PDF is saved into resume/ AND swapped in
 // as the active resume so every ATS site's file-upload step (formFiller.js)
 // picks it up automatically. Mirrors JobApplier's job_automation
 // handleTailorResume exactly — same request/response shape, same profile swap.

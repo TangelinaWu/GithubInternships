@@ -6,7 +6,7 @@
   function wait(ms) { return new Promise(r => setTimeout(r, ms)) }
 
   // Best-effort: tailors the master resume to this job description and swaps
-  // it in as the active resume (via background.js → local server → resumes/),
+  // it in as the active resume (via background.js → local server → resume/),
   // mirroring JobApplier's job_automation linkedin.js _tailorResume. Never
   // blocks or fails the apply flow — falls back to whatever resume is already
   // configured if tailoring times out or errors.
