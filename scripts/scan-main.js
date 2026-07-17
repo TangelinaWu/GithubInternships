@@ -152,14 +152,20 @@ async function preloadResume(job) {
 function waitForJobCompletion(url, timeoutMs = 8 * 60 * 1000) {
   return new Promise((resolve) => {
     let resolved = false
+    let removeCb = null
     const timer = setTimeout(() => {
-      if (!resolved) { resolved = true; resolve({ url, decision: 'TIMEOUT' }) }
+      if (!resolved) {
+        resolved = true
+        if (removeCb) removeCb()
+        resolve({ url, decision: 'TIMEOUT' })
+      }
     }, timeoutMs)
 
-    sheetsServer.setOnLogCallback((entry) => {
+    removeCb = sheetsServer.setOnLogCallback((entry) => {
       if (!resolved && entry.url === url) {
         resolved = true
         clearTimeout(timer)
+        removeCb()
         resolve(entry)
       }
     })
@@ -214,37 +220,80 @@ app.whenReady().then(async () => {
   sheetsServer.loadConfig()
   sheetsServer.startServer()
 
-  // Register physical-click handler
+  // Same site-specific selectors as electron-main.js — must stay in sync.
+  const SITE_APPLY_SELECTORS = {
+    'greenhouse.io':     ['#apply_button', 'a[href="#app"]', '.postings-btn', 'button[id*="apply" i]'],
+    'lever.co':          ['.postings-btn', 'a.postings-btn', '.template-btn-submit'],
+    'myworkdayjobs.com': ['[data-automation-id="applyButton"]', '[data-automation-id="adventureButton"]', 'button[data-automation-id*="apply" i]'],
+    'ashbyhq.com':       ['a[href*="/application"]', 'button[class*="apply" i]', '[data-testid*="apply" i]'],
+    'joinhandshake.com': ['button[class*="apply" i]', '[data-hook*="apply" i]'],
+    'simplify.jobs':     ['button[class*="apply" i]', 'a[class*="apply" i]', 'button[class*="easy" i]'],
+  }
+  const SITE_SELECTORS_SRC = JSON.stringify(SITE_APPLY_SELECTORS)
+  const FORM_SEL = 'form input:not([type="hidden"]), form select, form textarea'
+
+  const pageHasForm = (win) =>
+    win.webContents.executeJavaScript(`!!document.querySelector('${FORM_SEL}')`).catch(() => false)
+
+  const findApplyRects = (win) => win.webContents.executeJavaScript(`
+    (() => {
+      const siteSelectors = ${SITE_SELECTORS_SRC}
+      const isVisible = (el) => {
+        const s = getComputedStyle(el)
+        if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && r.height > 0
+      }
+      const looksLikeApply = (t) => {
+        if (!t || t.length > 40) return false
+        return /(easy\\s+apply|quick\\s+apply|apply\\s*(now|here)?|apply\\s+(for|to)\\s+(this\\s+)?(job|position|role|opening|internship)|submit\\s+(your\\s+)?application|i.?m\\s+interested)/i.test(t)
+      }
+      const host = location.hostname.toLowerCase()
+      const entry = Object.entries(siteSelectors).find(([d]) => host.includes(d))
+      const seen = new Set(); const out = []
+      const add = (el) => { if (el && !seen.has(el) && isVisible(el)) { seen.add(el); out.push(el) } }
+      ;(entry ? entry[1] : []).forEach(sel => document.querySelectorAll(sel).forEach(add))
+      document.querySelectorAll('a[href], button, [role="button"]').forEach(el => {
+        const t = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim()
+        if (looksLikeApply(t)) add(el)
+      })
+      return out.map(el => { const r = el.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } })
+    })()
+  `).catch(() => [])
+
+  // Register physical-click handler (mirrors electron-main.js physicalClickApply)
   sheetsServer.setPhysicalClickHandler(async (url) => {
     const win = BrowserWindow.getAllWindows().find(w => {
       if (w.isDestroyed()) return false
       const wUrl = w.webContents.getURL()
-      return wUrl === url || wUrl.split('?')[0] === url.split('?')[0]
+      return wUrl === url || wUrl.split('?')[0].replace(/#.*$/, '') === url.split('?')[0].replace(/#.*$/, '')
     })
     if (!win) return { clicked: false, reason: 'window-not-found' }
+    if (win.isDestroyed()) return { clicked: false, reason: 'window-gone' }
+    if (await pageHasForm(win)) return { clicked: false, reason: 'form-already-present' }
 
     const startUrl = win.webContents.getURL()
-    const rects = await win.webContents.executeJavaScript(`
-      (() => {
-        const btns = [...document.querySelectorAll('a[href], button, [role="button"]')]
-          .filter(el => {
-            const t = (el.innerText || '').trim()
-            return /(apply|submit application)/i.test(t) && t.length < 40
-          })
-        return btns.map(el => { const r = el.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } })
-      })()
-    `).catch(() => [])
 
-    for (const rect of rects) {
-      win.show(); win.focus()
-      win.webContents.sendInputEvent({ type: 'mouseMove',  x: rect.x, y: rect.y })
-      await new Promise(r => setTimeout(r, 80))
-      win.webContents.sendInputEvent({ type: 'mouseDown',  x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
-      await new Promise(r => setTimeout(r, 60))
-      win.webContents.sendInputEvent({ type: 'mouseUp',    x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
-      await new Promise(r => setTimeout(r, 1200))
-      if (win.webContents.getURL() !== startUrl || await win.webContents.executeJavaScript(`!!document.querySelector('form input')`).catch(() => false)) {
-        return { clicked: true, x: rect.x, y: rect.y }
+    for (let round = 0; round < 3; round++) {
+      if (round > 0) await new Promise(r => setTimeout(r, 1200))
+      if (win.isDestroyed()) return { clicked: false, reason: 'window-gone' }
+
+      const rects = await findApplyRects(win)
+      if (!rects.length) continue
+
+      for (const rect of rects) {
+        if (win.isDestroyed()) return { clicked: false, reason: 'window-gone' }
+        win.show(); win.focus()
+        await new Promise(r => setTimeout(r, 150))
+        win.webContents.sendInputEvent({ type: 'mouseMove',  x: rect.x, y: rect.y })
+        await new Promise(r => setTimeout(r, 80))
+        win.webContents.sendInputEvent({ type: 'mouseDown',  x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
+        await new Promise(r => setTimeout(r, 60))
+        win.webContents.sendInputEvent({ type: 'mouseUp',    x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
+        await new Promise(r => setTimeout(r, 1200))
+        if (win.isDestroyed()) return { clicked: false, reason: 'window-gone' }
+        if (win.webContents.getURL() !== startUrl) return { clicked: true, x: rect.x, y: rect.y }
+        if (await pageHasForm(win)) return { clicked: true, x: rect.x, y: rect.y }
       }
     }
     return { clicked: false, reason: 'no-form-after-click' }

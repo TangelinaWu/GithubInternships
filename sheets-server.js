@@ -439,7 +439,11 @@ async function getScanQueue() {
 // Fired whenever appendRow() completes, with the full entry object.
 
 let _onLogCallbacks = []
-function setOnLogCallback(fn) { _onLogCallbacks.push(fn) }
+// Returns a remove function so callers can unregister after the job resolves.
+function setOnLogCallback(fn) {
+  _onLogCallbacks.push(fn)
+  return () => { _onLogCallbacks = _onLogCallbacks.filter(cb => cb !== fn) }
+}
 
 // Sanitize a company/role string into a safe filename fragment.
 function slugify(str) {
