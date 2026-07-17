@@ -374,7 +374,8 @@ async function createWindow() {
     webPreferences: { nodeIntegration: false, contextIsolation: true },
   })
   mainWindow.loadURL('https://github.com/zapplyjobs/Internships-2027')
-  mainWindow.on('closed', () => { mainWindow = null })
+  mainWindow.on('closed', () => { mainWindow = null; sheetsServer.setMainWindow(null) })
+  sheetsServer.setMainWindow(mainWindow)
   attachContextMenu(mainWindow)
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'allow' }))
   mainWindow.webContents.on('did-create-window', win => {
@@ -417,15 +418,10 @@ async function createWindow() {
   initialWindowsCreated = true
 }
 
-// Bring every dynamically-created apply tab to the front so the user can see
-// the automation working.  Runs for ALL windows opened after startup — except
-// the resume-tailoring engine's own hidden windows (JobApplier's shared
-// resume_tailor/tailorEngine.js opens a claude.ai/new chat and a temp-file
-// HTML→PDF render window, both with show:false), which must stay in the
-// background or tailoring visibly "pops up" mid-apply and steals focus.
-function isHiddenTailoringWindow(win) {
-  const url = win.webContents.getURL()
-  return url.startsWith('https://claude.ai/new') || url.includes('tailored_resume_render_')
+// Suppress auto-show for the PDF render scratch window only — the tailor
+// claude.ai window is now added as a tab via addTabbedWindow and shown there.
+function isHiddenScratchWindow(win) {
+  return win.webContents.getURL().includes('tailored_resume_render_')
 }
 
 app.on('browser-window-created', (_event, win) => {
@@ -435,7 +431,7 @@ app.on('browser-window-created', (_event, win) => {
   win.webContents.on('did-create-window', w2 => attachContextMenu(w2))
   // Show immediately — dom-ready fires too late to feel snappy
   win.once('ready-to-show', () => {
-    if (win.isDestroyed() || isHiddenTailoringWindow(win)) return
+    if (win.isDestroyed() || isHiddenScratchWindow(win)) return
     win.show()
     win.focus()
   })

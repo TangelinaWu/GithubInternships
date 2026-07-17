@@ -22,6 +22,9 @@ function setPhysicalClickHandler(fn) { _physicalClickHandler = fn }
 // (chrome.storage has no filesystem access — only the main process does).
 let _saveAnswersHandler = null
 function setSaveAnswersHandler(fn) { _saveAnswersHandler = fn }
+
+let _mainWindow = null
+function setMainWindow(win) { _mainWindow = win }
 const CREDS_FILE  = path.join(__dirname, 'credentials', 'sheets-credentials.json')
 const CONFIG_FILE = path.join(__dirname, 'credentials', 'sheets-config.json')
 
@@ -51,8 +54,10 @@ const SKIPPED_HEADERS = [
 // Columns for the master tracker sheet. Status is column A so it's always
 // the first thing visible; Application URL (col F) is the lookup key used
 // to find a row again when the decision comes in later.
+// H–K are written by the 3-script pipeline: parse → resume → scan.
 const GITHUB_HEADERS = [
   'Status', 'Timestamp', 'Company', 'Role', 'Co-op Date', 'Application URL', 'Description',
+  'Fit', 'Fit Reason', 'Resume', 'Applied',
 ]
 
 let _creds          = null
@@ -137,21 +142,24 @@ async function ensureHeaderRow(token, sheetName, headers) {
   if (_headersEnsured[sheetName]) return
   await ensureSheet(token, sheetName)
 
+  const endCol = String.fromCharCode(64 + headers.length)
   const resp = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${_spreadsheetId}/values/${sheetName}!A1`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${_spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:${endCol}1`,
     { headers: { Authorization: `Bearer ${token}` } }
   )
-  const data = await resp.json()
-  if (data.values?.[0]?.[0] !== headers[0]) {
-    const endCol = String.fromCharCode(64 + headers.length)
+  const data     = await resp.json()
+  const existing = data.values?.[0] || []
+  // Rewrite whenever the first cell or the column count doesn't match.
+  if (existing[0] !== headers[0] || existing.length < headers.length) {
     await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_spreadsheetId}/values/${sheetName}!A1:${endCol}1?valueInputOption=USER_ENTERED`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${_spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:${endCol}1?valueInputOption=USER_ENTERED`,
       {
         method:  'PUT',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body:    JSON.stringify({ values: [headers] }),
       }
     )
+    console.log(`[Sheets] Updated header row for ${sheetName} (${headers.length} cols)`)
   }
   _headersEnsured[sheetName] = true
 }
@@ -342,11 +350,20 @@ async function appendRow(entry) {
 
   console.log(`[Sheets] Logged to ${sheetName}: ${entry.decision} — ${entry.company} / ${entry.role}`)
 
-  // Also flip the master tracker's Status for this URL. Best-effort — a
-  // failure here shouldn't fail the primary Applied/Skipped log above.
+  // Flip the master tracker's Status and — for APPLIED decisions — mark col K.
   syncGithubInternshipsStatus(entry).catch(e =>
     console.error('[Sheets] syncGithubInternshipsStatus error:', e.message)
   )
+  if (entry.decision === 'APPLIED' && entry.url) {
+    markApplied(entry.url).catch(e =>
+      console.error('[Sheets] markApplied error:', e.message)
+    )
+  }
+
+  // Notify scan-main.js (or any other listener) that a job was logged.
+  for (const fn of _onLogCallbacks) {
+    try { fn(entry) } catch {}
+  }
 }
 
 async function getSeenUrls() {
@@ -367,6 +384,63 @@ async function getSeenUrls() {
   return [...new Set([...appliedUrls, ...skippedUrls])]
 }
 
+// ── Pipeline column helpers ───────────────────────────────────────────────────
+// Col J (index 9)  = Resume   — filename, written by npm run resume
+// Col K (index 10) = Applied  — 'Yes', written by npm run scan
+
+async function updateGithubCol(url, colLetter, value) {
+  if (!url) return
+  const token    = await getAccessToken()
+  const sheetRow = await findGithubInternshipsRow(token, url)
+  if (!sheetRow) return
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${_spreadsheetId}/values/${encodeURIComponent(GITHUB_SHEET)}!${colLetter}${sheetRow}?valueInputOption=USER_ENTERED`,
+    {
+      method:  'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ values: [[value]] }),
+    }
+  )
+}
+
+async function markResumeReady(url, fileName) {
+  await updateGithubCol(url, 'J', fileName || 'Yes')
+  console.log(`[Sheets] Resume marked for: ${url}`)
+}
+
+async function markApplied(url) {
+  await updateGithubCol(url, 'K', 'Yes')
+  console.log(`[Sheets] Applied marked for: ${url}`)
+}
+
+// Returns rows where Resume (col J) is filled AND Applied (col K) is empty.
+// Caller must have called loadConfig() / startServer() first.
+async function getScanQueue() {
+  const token = await getAccessToken()
+  await ensureHeaderRow(token, GITHUB_SHEET, GITHUB_HEADERS)
+  const resp = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${_spreadsheetId}/values/${encodeURIComponent(GITHUB_SHEET)}!A2:K`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  const data = await resp.json()
+  return (data.values || [])
+    .map((row, i) => ({
+      rowNum:     i + 2,
+      company:    row[2]  || '',
+      role:       row[3]  || '',
+      url:        row[5]  || '',
+      resumeFile: row[9]  || '',   // col J
+      applied:    row[10] || '',   // col K
+    }))
+    .filter(r => r.url && r.resumeFile && !r.applied)
+}
+
+// ── Log callbacks (used by scan-main.js to sequence jobs) ────────────────────
+// Fired whenever appendRow() completes, with the full entry object.
+
+let _onLogCallbacks = []
+function setOnLogCallback(fn) { _onLogCallbacks.push(fn) }
+
 // Sanitize a company/role string into a safe filename fragment.
 function slugify(str) {
   return String(str || '')
@@ -386,7 +460,12 @@ async function tailorResumeForJob({ jobDescription, jobTitle, company }) {
   }
   const masterResume = JSON.parse(fs.readFileSync(MASTER_RESUME_FILE, 'utf8'))
 
-  const result = await tailorEngine.runTailorFlow({ jobDescription, masterResume, show: false })
+  // Full page text can be 10k+ chars — truncate to keep the prompt manageable
+  const truncatedDesc = jobDescription.slice(0, 4000)
+  console.log(`[ResumeTailor] jobDescription length: ${jobDescription.length} → truncated to ${truncatedDesc.length}`)
+
+  const parentWindow = _mainWindow && !_mainWindow.isDestroyed() ? _mainWindow : null
+  const result = await tailorEngine.runTailorFlow({ jobDescription: truncatedDesc, masterResume, show: false, parentWindow })
   const state  = tailorEngine.buildStateFromResult(masterResume, result)
   const html   = tailorEngine.buildJakesHTML(state)
   const pdfBuffer = await tailorEngine.renderResumeToPdfBuffer(html)
@@ -563,6 +642,21 @@ function startServer() {
       return
     }
 
+    // scan-main.js fetches this to know which jobs to open.
+    if (req.method === 'GET' && req.url === '/scan-queue') {
+      getScanQueue()
+        .then(queue => {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ queue }))
+        })
+        .catch(e => {
+          console.error('[Sheets] getScanQueue error:', e.message)
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: e.message }))
+        })
+      return
+    }
+
     res.writeHead(404); res.end()
   })
 
@@ -573,4 +667,14 @@ function startServer() {
   return server
 }
 
-module.exports = { startServer, setPhysicalClickHandler, setSaveAnswersHandler }
+module.exports = {
+  startServer,
+  setPhysicalClickHandler,
+  setSaveAnswersHandler,
+  setMainWindow,
+  setOnLogCallback,
+  getScanQueue,
+  markResumeReady,
+  markApplied,
+  loadConfig,
+}

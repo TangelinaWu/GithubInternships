@@ -12,6 +12,17 @@
   // configured if tailoring times out or errors.
   async function tailorResumeBeforeApply(title, company, fullDescription) {
     if (!fullDescription) return
+    // npm run scan pre-loads a tailored resume and sets this flag so we skip
+    // the expensive re-tailor (the PDF was already made in npm run resume).
+    const { skipResumeForUrl } = await chrome.storage.local.get('skipResumeForUrl')
+    if (skipResumeForUrl && skipResumeForUrl === location.href) {
+      await chrome.storage.local.remove('skipResumeForUrl')
+      chrome.runtime.sendMessage({
+        type: MSG.FILL_LOG,
+        payload: { label: 'Resume pre-loaded', status: 'scan mode — using tailored PDF', text: 'Resume pre-loaded by scan pipeline — skipping re-tailor' },
+      }).catch(() => {})
+      return
+    }
     try {
       const result = await chrome.runtime.sendMessage({
         type: MSG.TAILOR_RESUME,

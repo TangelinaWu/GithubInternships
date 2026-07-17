@@ -4,7 +4,10 @@
   "description": "Browse GitHub internship repos, assess fit with Claude, auto-log to Google Sheets",
   "main": "electron-main.js",
   "scripts": {
-    "start": "electron ."
+    "start":  "electron .",
+    "parse":  "node scripts/parse.js",
+    "resume": "electron scripts/resume-main.js",
+    "scan":   "electron scripts/scan-main.js"
   },
   "devDependencies": {
     "electron": "^42.3.3"
