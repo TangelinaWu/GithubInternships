@@ -1,6 +1,6 @@
 'use strict'
 // npm run parse
-// Fetches the first 50 new jobs from each GitHub internship repo, scores each
+// Fetches the first 10 new jobs from each GitHub internship repo, scores each
 // against the same 4-gate criteria used by the extension (TIMING / SCAM /
 // DEGREE / PAID) via the Claude API, and appends results to the
 // "Github Internships" Google Sheet with Fit=Pass|Fail and a reason.
@@ -30,7 +30,7 @@ const REPOS = [
   { name: 'SimplifyJobs/Summer2026-Internships', branch: 'dev',  label: 'Summer2026-Internships'  },
 ]
 
-const PARSE_LIMIT  = 50  // max new jobs processed per repo per run
+const PARSE_LIMIT  = 10  // max new jobs processed per repo per run
 const API_DELAY_MS = 700 // pause between Claude API calls to respect rate limits
 
 // ── GitHub README fetching ────────────────────────────────────────────────────
